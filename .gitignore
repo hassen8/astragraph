@@ -1,0 +1,19 @@
+node_modules/
+__pycache__/
+.venv/
+dist/
+*.pyc
+*.pyo
+.env
+
+# Scratch / local dev files
+patch.py
+main.py
+run_pipeline.py
+test_extractor_local.py
+sample_run.ipynb
+
+# Tool-generated
+.python-version
+ingestion_checkpoint.json
+chroma_db/
