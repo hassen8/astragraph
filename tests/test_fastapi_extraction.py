@@ -51,7 +51,7 @@ def test_fastapi_extraction():
         tree = parser.parse(source)
         
         try:
-            mod, cls, fn, attrs, params, calls = extract_file(
+            mod, _pkg, cls, fn, attrs, params, calls = extract_file(
                 file_path=filepath,
                 language="python",
                 root=tree.root_node,

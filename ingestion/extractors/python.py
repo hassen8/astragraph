@@ -5,10 +5,12 @@ from tree_sitter import Node
 from .extractor import ExtractionContext
 from ..models import (
     ModuleNode,
+    PackageNode,
     ClassNode,
     FunctionNode,
     AttributeNode,
     ParameterNode,
+    make_uuid,
 )
 
 # ---------------------------------------------------------------------------
@@ -74,6 +76,30 @@ class PythonBuilder:
             is_init=is_init,
             repo_id=self.ctx.repo_id,
         )
+
+    def build_package(self) -> PackageNode:
+        from pathlib import Path
+        pkg_dir  = str(Path(self.ctx.file_path).parent)
+        pkg_name = pkg_dir.replace("/", ".") if pkg_dir != "." else self.ctx.repo_id
+
+        has_init  = False
+        init_file = None
+        if self.ctx.repo_root:
+            init_path = Path(self.ctx.repo_root) / pkg_dir / "__init__.py"
+            has_init  = init_path.exists()
+            if has_init:
+                init_file = str(Path(pkg_dir) / "__init__.py")
+
+        return PackageNode(
+            uuid=make_uuid(self.ctx.repo_id, pkg_name),
+            name=pkg_name,
+            directory=pkg_dir,
+            is_namespace=not has_init,
+            has_init=has_init,
+            init_file=init_file,
+            repo_id=self.ctx.repo_id,
+        )
+
 
     def build_classes(self) -> list[ClassNode]:
         captures = self.ctx.captures("class", self.ctx.root)

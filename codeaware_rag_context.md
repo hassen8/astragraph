@@ -2,7 +2,9 @@
 
 > This document is the authoritative implementation reference for the CodeAware GraphRAG project. It captures every architectural decision, data model, function, class, query, and open challenge discussed across the entire design process. Use this as the primary context file when continuing implementation in Claude Code.
 >
-> **Current status:** Phase 1 (ingestion pipeline) fully designed. All models, extractor, relationship resolver, and pipeline orchestrator have been written. Phase 2 (query agent) is designed but not yet implemented.
+> **Current status:** Phase 1 ~70% complete. Models, extractor (Python full, TS/Go stubs), relationship resolver, and pipeline orchestrator are implemented and tested. Next: `graph/schema.py` → `ingestion/writers/neo4j_writer.py` → wire pipeline + `cli.py`. Phase 2 (query agent) designed but not yet implemented.
+>
+> **Key design decisions:** No chunking (functions are single EmbedDoc always). No 3-tier tiering — replaced with `should_embed(fn) -> bool`. Raw `neo4j` driver for writers (LangGraph reserved for Phase 2 agent). Pass 2 resolves calls from accumulated raw dicts — no re-walk.
 
 ---
 
@@ -152,9 +154,6 @@ Source codebase (local path)
         └── build_calls()       ← Pass 2 only (needs repo-wide lookup)
         │
         ▼
-   Tiering filter           embedding_tier(fn) → 1 | 2 | 3
-        │
-        ▼
    RelationshipResolver     resolve_pass1() per file
         │                   resolve_calls() after full repo walk
         │
@@ -252,13 +251,12 @@ Package    ──[PART_OF]──►          Package | Repository
 6. Write Pass 1 relationships to Neo4j
 7. Accumulate all `FunctionNode`s for Pass 2
 
-**Pass 2** — after all files are walked:
+**Pass 2** — after all files are walked (no re-walk):
 1. Build repo-wide function lookup: `Dict[name | qualified_name → FunctionNode]`
-2. Re-walk all files
-3. Run `extract_calls()` with the complete lookup (call resolution now possible)
-4. Upgrade `CALLS_UNKNOWN` to `CALLS` where resolvable
-5. Write `CALLS` relationships to Neo4j
-6. Embed all Tier-1 entities and write to vector store
+2. Wrap accumulated raw call dicts into `CALLS_UNKNOWN` Relationship objects
+3. Upgrade `CALLS_UNKNOWN` to `CALLS` where resolvable via lookup
+4. Write `CALLS` relationships to Neo4j
+5. Embed entities passing `should_embed()` filter and write to vector store
 
 **Why two passes?** `foo()` in function A might call function B defined in a file not yet processed. You cannot resolve call targets in Pass 1 without reading the whole repo first. All other relationships (`INHERITS`, `IMPORTS`, `METHOD_OF`, `DEFINED_IN`) can be resolved incrementally as files are processed because their targets are registered into shared dicts immediately on extraction.
 
@@ -486,8 +484,8 @@ PART_OF_UNKNOWN   Package    -> None    {parent_package}
 @dataclass
 class EmbedDoc:
     uuid:         str           # matches Neo4j node UUID exactly
-    chunk_index:  int           # 0 for single-chunk; 0..N for sliding window
-    total_chunks: int
+    chunk_index:  int           # always 0 (no chunking — functions are single EmbedDoc)
+    total_chunks: int           # always 1
     text:         str           # text that gets embedded
     entity_type:  str           # "function" | "class" | "module" | "attribute"
     tier:         int           # 1 = embed, 2 = graph-only, 3 = skip
@@ -538,8 +536,9 @@ Compiles and caches tree-sitter Query objects upon first use. Exposes `captures(
 Each language has a dedicated builder, like `PythonBuilder`. These builders expose a standardized interface to build domain objects:
 
 - `build_module() -> ModuleNode`: Extracts module docstrings, exported names, and imports.
+- `build_package() -> PackageNode`: Constructs the package node using language-specific logic. Python checks `__init__.py` on disk via `ctx.repo_root`; Go stubs read the `package` clause from the AST (not yet implemented); TypeScript stubs walk up to `package.json` (not yet implemented).
 - `build_classes() -> list[ClassNode]`: Scans for class definitions, base classes, methods, and populates `extracted_attributes` containing `AttributeNode`s.
-- `build_functions() -> list[FunctionNode]`: Recursively unwraps async wrappers, extracts signatures, docstrings, and populates `extracted_parameters` containing `ParameterNode`s.
+- `build_functions() -> list[FunctionNode]`: Extracts signatures, docstrings, and populates `extracted_parameters` containing `ParameterNode`s.
 - `build_calls() -> list[dict]`: Runs call-site queries and returns a list of raw call dictionaries containing `src_uuid`, `callee` text, and `call_site_line`.
 
 Unlike the previous architecture, these builders extract relationships like attributes and parameters explicitly during their AST walks.
@@ -554,8 +553,13 @@ def extract_file(
     source: bytes,
     lang_obj: Language,
     repo_id: str,
-) -> tuple[ModuleNode, list[ClassNode], list[FunctionNode], list[AttributeNode], list[ParameterNode], list[dict]]:
+    repo_root: str = "",
+) -> tuple[ModuleNode, PackageNode, list[ClassNode], list[FunctionNode], list[AttributeNode], list[ParameterNode], list[dict]]:
 ```
+
+`repo_root` is the absolute path to the repo on disk. It is used by `build_package()` to check for `__init__.py` existence (Python). It is optional — when absent, `has_init=False` and `is_namespace=True` are used as safe fallbacks (e.g. for in-memory tests).
+
+`PackageNode` construction lives in each language builder (`build_package()`), not at the pipeline level. This is because package semantics are language-specific: Python reads `__init__.py` presence from the filesystem, Go reads the `package <name>` declaration from the AST, TypeScript reads `package.json` walking up the directory tree. A generic pipeline-level factory cannot handle these differences correctly.
 
 This function instantiates the `ExtractionContext` and dynamically chooses the correct builder (e.g., `PythonBuilder`). It triggers the build methods in sequence and returns the comprehensive set of domain objects and call dictionaries directly.
 
@@ -675,26 +679,27 @@ Must be called separately from `write_relationships` because it needs to **creat
 
 ```python
 class IngestionPipeline:
-    def __init__(self, cfg: Config): ...
-    def run(self, repo_path, repo_id, languages, resume=False) -> None: ...
-    def _write_embeddings(self, module, classes, functions) -> None: ...
+    def __init__(self, repo: RepositoryNode): ...
+    def run(self, repo_path: str, languages: list[str] | None = None) -> tuple[list[Relationship], list[Relationship]]: ...
 ```
+
+`__init__` takes a `RepositoryNode` (not `Config`) because the pipeline needs the repo identity to construct the resolver, and `Config` is only needed once Neo4j/Chroma writers are wired up. Writers are stubbed with `# TODO` comments.
+
+`run()` returns `(pass1_rels, pass2_rels)` so the pipeline is testable and inspectable without a running Neo4j instance.
 
 #### `run()`
 
 **Pass 1 loop** — per file:
 ```python
-for file_path, language in walk_repo(repo_path, languages):
-    # skip if in checkpoint (resume mode)
+for rel_path, language in walk_repo(repo_path):
     # read source bytes
-    # should_skip_file() filter
-    # make relative path for stable UUIDs
-    # parse with tree-sitter
-    # extract_file(..., repo_wide_fn_lookup=None)
-    # write_module / write_class / write_function to Neo4j
-    # resolver.resolve_pass1(module, classes, functions)
-    # rel_writer.write_relationships(pass1_rels)
+    # get/cache lang_obj per language
+    # parse with tree-sitter (parser cached per language)
+    # extract_file(..., repo_root=repo_path) → 7-tuple
+    # resolver.resolve_pass1(module, package, classes, functions, attributes, parameters)
+    # TODO: write entities to Neo4j
     # all_functions.extend(functions)
+    # all_raw_calls.extend(raw_calls)   ← accumulate for Pass 2
 ```
 
 **Between passes:**
@@ -702,155 +707,72 @@ for file_path, language in walk_repo(repo_path, languages):
 repo_fn_lookup = build_repo_fn_lookup(all_functions)
 ```
 
-**Pass 2 loop** — per file:
+**Pass 2** — no re-walk. Raw call dicts accumulated during Pass 1 are wrapped into `CALLS_UNKNOWN` `Relationship` objects and resolved in bulk:
 ```python
-for file_path, language in walk_repo(repo_path, languages):
-    # parse again (same source, idempotent)
-    # extract_file(..., repo_wide_fn_lookup=repo_fn_lookup)
-    # resolver.resolve_calls(raw_calls, repo_fn_lookup)
-    # rel_writer.write_relationships(resolved_calls)
-    # _write_embeddings(module, classes, functions)
-    # _save_checkpoint(rel_path)
+raw_call_rels = [Relationship(src_uuid=..., dst_uuid=None, rel_type="CALLS_UNKNOWN", ...) for c in all_raw_calls]
+pass2_rels = resolver.resolve_calls(raw_call_rels, repo_fn_lookup)
+# TODO: write pass2_rels to Neo4j
+# TODO: embed Tier-1 entities and write to vector store
 ```
 
-#### `_write_embeddings(module, classes, functions)`
+**Why no re-walk in Pass 2?** Re-parsing every file a second time is wasteful. Raw call dicts are cheap to accumulate in memory alongside `all_functions` during Pass 1 — the same information is available without re-reading disk.
 
-- Module: always embed, single chunk → `chunk_module(module)` → `vector_writer.upsert`
-- Classes: always embed, single chunk → `chunk_class(cls)` → `vector_writer.upsert`
-- Functions: tier-filtered → `embedding_tier(fn)` → if `tier == 1`: `chunk_function(fn)` (may return multiple `EmbedDoc`s) → `vector_writer.upsert`
-
-### Checkpoint helpers
+### `make_repo_node` convenience factory
 
 ```python
-def _load_checkpoint(path: str) -> set[str]   # reads JSON list of processed file paths
-def _save_checkpoint(path: str, file_path: str) -> None  # appends file path to checkpoint
+def make_repo_node(repo_path: str, repo_id: str | None = None, remote_url: str | None = None) -> RepositoryNode:
 ```
+
+Builds a `RepositoryNode` from a local path. Defaults `repo_id` to the directory name. Kept in `ingestion/pipeline.py` because it is pipeline-level concern (not language-specific).
 
 ---
 
 ## File: `ingestion/tiering.py`
 
-Solves the vector store explosion problem for large repos (e.g. PyTorch: ~80,000 raw functions → ~15,000–20,000 Tier 1 embeddings via 4–5x reduction).
+**Design decision:** The original 3-tier system (`embedding_tier() → 1 | 2 | 3`) was dropped. Functions are not chunked — each is a single `EmbedDoc`. The only filtering needed is a binary embed/skip decision.
 
-### `embedding_tier(fn: FunctionNode) -> int`
+### `should_embed(fn: FunctionNode) -> bool`
 
 ```python
-def embedding_tier(fn: FunctionNode) -> int:
-    """
-    Returns:
-        1 — embed + graph (full treatment)
-        2 — graph only (structural traversal but no vector embedding)
-        3 — skip entirely (don't write to graph or vector store)
-    """
+def should_embed(fn: FunctionNode) -> bool:
+    """Returns True if this function should be embedded in the vector store."""
     body_lines = fn.line_end - fn.line_start
 
-    # Tier 1: docstring is a strong author signal
-    if fn.docstring and len(fn.docstring) > 20:
-        return 1
+    # Skip trivially small functions with no docstring — no semantic content
+    if body_lines < 5 and not fn.docstring:
+        return False
 
-    # Tier 3: too small to have meaningful semantic content
-    if body_lines < 5:
-        return 3
+    # Skip short private helpers with no docstring
+    if fn.name.startswith("_") and body_lines < 15 and not fn.docstring:
+        return False
 
-    # Dunder methods — key ones always Tier 1
-    important_dunders = {"__init__", "__call__", "__repr__", "__new__", "__enter__", "__exit__"}
-    if fn.name.startswith("__") and fn.name.endswith("__"):
-        return 1 if fn.name in important_dunders else 2
-
-    # Tier 2: short private helpers with no docstring
-    if fn.name.startswith("_") and body_lines < 15:
-        return 2
-
-    # Tier 2: straight-line code, low semantic retrieval value
-    if fn.complexity <= 1 and body_lines < 10:
-        return 2
-
-    return 1
+    return True
 ```
 
-### `should_skip_file(file_path: str, source: bytes) -> bool`
-
-```python
-def should_skip_file(file_path: str, source: bytes) -> bool:
-    """Returns True if the entire file should be excluded from ingestion."""
-    basename = os.path.basename(file_path)
-
-    # Test files
-    if basename.startswith("test_") or basename.endswith("_test.py"):
-        return True
-    if basename in ("conftest.py",):
-        return True
-
-    # Auto-generated files — scan first 500 bytes
-    header = source[:500].decode("utf-8", errors="replace")
-    autogen_markers = ["DO NOT EDIT", "generated by", "@generated", "auto-generated"]
-    if any(marker.lower() in header.lower() for marker in autogen_markers):
-        return True
-
-    return False
-```
+Always embed: modules, classes (single EmbedDoc each, no filtering).
 
 ---
 
 ## File: `ingestion/chunker.py`
 
-### Chunking strategy
+**Design decision:** Not implemented. Sliding-window chunking was designed for prose documents, not code. Functions are atomic units — splitting a function body loses context and returns partial code to the LLM. Every entity is a single `EmbedDoc` (`chunk_index=0`, `total_chunks=1` always).
 
-**Embed the full function body** — not a character preview. The 300-char body preview on `FunctionNode` is for tiering decisions only; it is never what gets embedded.
+Embed text is built inline in the embedder using `build_function_embed_text`, `build_class_embed_text`, `build_module_embed_text`.
 
-For functions ≤ 60 lines: single `EmbedDoc` chunk.
-For functions > 60 lines: sliding window with 20-line overlap, anchored to signature + docstring.
+### Embed text formats
 
+**Function:**
 ```
-Chunk 0 (anchor):  signature + docstring + lines 0–60
-Chunk 1:           signature + docstring + lines 40–100    ← 20-line overlap
-Chunk 2:           signature + docstring + lines 80–140    ← 20-line overlap
-...
-```
-
-Every chunk carries the signature and docstring so every retrieved chunk is self-contained. At query time: **deduplicate by `uuid`** before passing context to LLM.
-
-### `chunk_function(node: FunctionNode) -> list[EmbedDoc]`
-
-```python
-CHUNK_LINE_LIMIT = 60
-OVERLAP_LINES    = 20
-
-def chunk_function(node: FunctionNode) -> list[EmbedDoc]:
-    lines = node.full_body.splitlines()
-
-    if len(lines) <= CHUNK_LINE_LIMIT:
-        return [EmbedDoc(
-            uuid=node.uuid, chunk_index=0, total_chunks=1,
-            text=build_function_embed_text(node),
-            entity_type="function", tier=embedding_tier(node),
-            metadata=_function_metadata(node),
-        )]
-
-    anchor_header = f"Function: {node.qualified_name}\nSignature: {node.signature}\n"
-    if node.docstring:
-        anchor_header += f"Description: {node.docstring}\n"
-
-    chunks = []
-    step   = CHUNK_LINE_LIMIT - OVERLAP_LINES
-    starts = list(range(0, len(lines), step))
-
-    for i, start in enumerate(starts):
-        window = lines[start:start + CHUNK_LINE_LIMIT]
-        text   = anchor_header + f"Body (lines {start+1}–{start+len(window)}):\n" + "\n".join(window)
-        chunks.append(EmbedDoc(
-            uuid=node.uuid, chunk_index=i, total_chunks=len(starts),
-            text=text, entity_type="function", tier=embedding_tier(node),
-            metadata={**_function_metadata(node), "chunk_index": i, "total_chunks": len(starts)},
-        ))
-
-    return chunks
+Function: payments.core.PaymentProcessor.process
+Signature: def process(self, amount: Decimal, currency: str) -> dict
+Description: Submit a charge and return the gateway response.
+Returns: dict
+File: payments/core.py
+Body:
+<full source>
 ```
 
-### `chunk_class(node: ClassNode) -> EmbedDoc`
-
-Always single chunk. Embed text format:
-
+**Class:**
 ```
 Class: payments.core.PaymentProcessor
 Inherits: BaseProcessor, RetryMixin
@@ -860,10 +782,7 @@ Attributes: self.client, self.max_retries, self.idempotency_store
 File: payments/core.py
 ```
 
-### `chunk_module(node: ModuleNode) -> EmbedDoc`
-
-Always single chunk. Embed text format:
-
+**Module:**
 ```
 Module: payments.core
 File: payments/core.py
@@ -901,8 +820,8 @@ Semantically richest content first (name, signature, docstring) so embedding cap
 |---|---|---|
 | `Module` | Synthesised: docstring + exports + imports | Always single chunk |
 | `Class` | Docstring + base classes + method inventory + attributes | Always single chunk |
-| `Function` (Tier 1) | Full body + signature + docstring | Sliding window if > 60 lines |
-| `Function` (Tier 2) | Graph only — no embedding | — |
+| `Function` (passes `should_embed`) | Full body + signature + docstring | Always single chunk |
+| `Function` (fails `should_embed`) | Graph only — no embedding | — |
 | `Parameter` | Never embedded | — |
 | `Attribute` | Never embedded separately (captured in class embed) | — |
 
@@ -996,22 +915,19 @@ class Config:
 
 ```python
 import click
-from ingestion.pipeline import IngestionPipeline
+from ingestion.pipeline import IngestionPipeline, make_repo_node
 from config import Config
 
 @click.command()
-@click.option("--repo",      required=True,                        help="Path to local repo root")
-@click.option("--repo-id",   default=None,                         help="Override repo identifier")
-@click.option("--languages", default="python,typescript,go",       help="Comma-separated list")
-@click.option("--resume",    is_flag=True,                         help="Skip already-processed files")
-def ingest(repo, repo_id, languages, resume):
-    cfg = Config()
-    pipeline = IngestionPipeline(cfg)
+@click.option("--repo",      required=True,   help="Path to local repo root")
+@click.option("--repo-id",   default=None,    help="Override repo identifier")
+@click.option("--languages", default="python", help="Comma-separated list")
+def ingest(repo, repo_id, languages):
+    repo_node = make_repo_node(repo, repo_id=repo_id)
+    pipeline  = IngestionPipeline(repo_node)
     pipeline.run(
         repo_path=repo,
-        repo_id=repo_id or repo.split("/")[-1],
         languages=languages.split(","),
-        resume=resume,
     )
 
 if __name__ == "__main__":
@@ -1191,11 +1107,11 @@ repo_id         string
 
 **Resolution:** Added `RepositoryNode` (graph root, enables multi-repo), `PackageNode` (Python import system, subsystem queries), `AttributeNode` (type-aware attribute queries), `ParameterNode` (type-aware parameter queries, Tier 2), `ExternalDependencyNode` (first-class external library nodes). `Interface/Protocol` implemented as `is_protocol: bool` property on ClassNode — in Python, Protocols are classes.
 
-### Challenge 8: Async function deduplication in tree-sitter
+### Challenge 8: Async function detection in tree-sitter
 
-**Problem:** Python's grammar wraps `async def` as `async_function_definition → function_definition`. Both nodes appear in query captures, causing every async function to be processed twice.
+**Problem:** In the installed `tree-sitter-python` grammar, `async def` is **not** wrapped in a separate `async_function_definition` node — it is a plain `function_definition` node with an `async` keyword token as a direct child. Adding `(async_function_definition) @fn.async_wrapper` to the query causes `"Invalid node type"` at parse time. A node type check `fn_node.type == "async_function_definition"` always returns `False`.
 
-**Resolution:** Build `{start_byte: wrapper_node}` dict from `fn.async_wrapper` captures. For each `fn.def`, check if a wrapper exists at the same `start_byte`. Use wrapper if found (correct `is_async` flag). Track `seen_bytes` set to deduplicate.
+**Resolution:** Detect `is_async` by inspecting children: `any(c.type == "async" for c in fn_node.children)`. No wrapper node, no deduplication needed — each `async def` produces exactly one `function_definition` capture.
 
 ### Challenge 9: `IMPORTS_EXTERNAL` needs node creation, not just edge creation
 
@@ -1207,22 +1123,23 @@ repo_id         string
 
 ## Implementation Order
 
-Build in this order to get a working end-to-end skeleton before adding complexity:
+**Completed:**
+1. ~~`config.py`~~ ✓
+2. ~~`ingestion/models.py`~~ ✓
+3. ~~`ingestion/walker.py`~~ ✓
+4. ~~`ingestion/extractors/` (Python full, TS/Go stubs)~~ ✓
+5. ~~`ingestion/relationships.py`~~ ✓
+6. ~~`ingestion/pipeline.py`~~ ✓
 
-1. `config.py` — zero dependencies, forces all naming decisions upfront
-2. `ingestion/models.py` — zero dependencies, defines all data contracts
-3. `ingestion/tiering.py` — pure function, no external deps, easy to unit test
-4. `ingestion/walker.py` — pure file I/O, no tree-sitter needed
-5. `graph/schema.py` — just Cypher strings + init function
-6. `ingestion/writers/neo4j_writer.py` — needs Neo4j running locally (Docker)
-7. `ingestion/extractor.py` — test on a tiny 3-function fixture `.py` file first
-8. `ingestion/chunker.py` — depends only on models
-9. `ingestion/embedder.py` — start with a stub returning a fixed vector; replace with OpenAI
-10. `ingestion/writers/vector_writer.py` — depends on embedder stub
-11. `ingestion/relationships.py` — depends on models and Neo4j writer
-12. `ingestion/pipeline.py` + `cli.py` — wires everything together
-13. End-to-end test on `requests` library (small, well-documented, Python-only)
-14. Scale test on `transformers` — validate tiering numbers and ingestion time
+**Remaining (in order):**
+7. `graph/schema.py` — indexes + uniqueness constraints, idempotent
+8. `ingestion/writers/neo4j_writer.py` — MERGE-based entity writes, UNWIND batching
+9. Wire writers into `ingestion/pipeline.py` + write `cli.py`
+10. `ingestion/embedder.py` — OpenAI embeddings wrapper + `should_embed()` filter
+11. `ingestion/writers/vector_writer.py` — Chroma upsert
+12. End-to-end test against `requests` library (small, Python-only)
+13. Scale test on `transformers` — validate embed counts and ingestion time
+14. Phase 2 — LangGraph query agent
 
 ---
 

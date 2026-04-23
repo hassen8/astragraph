@@ -16,6 +16,7 @@ from ..models import (
     FunctionNode,
     ClassNode,
     ModuleNode,
+    PackageNode,
     AttributeNode,
     ParameterNode,
     make_uuid,
@@ -70,13 +71,15 @@ class ExtractionContext:
         file_path: str,
         repo_id: str,
         lang_obj: Language,
+        repo_root: str = "",
     ):
-        self.language = language
-        self.root = root
-        self.source = source
+        self.language  = language
+        self.root      = root
+        self.source    = source
         self.file_path = file_path
-        self.repo_id = repo_id
-        self.lang_obj = lang_obj
+        self.repo_id   = repo_id
+        self.lang_obj  = lang_obj
+        self.repo_root = repo_root
 
         self._queries = load_queries(language)
         self._query_cache: dict[str, object] = {}
@@ -122,7 +125,8 @@ def extract_file(
     source: bytes,
     lang_obj: Language,
     repo_id: str,
-) -> tuple[ModuleNode, list[ClassNode], list[FunctionNode], list[AttributeNode], list[ParameterNode], list[dict]]:
+    repo_root: str = "",
+) -> tuple[ModuleNode, PackageNode, list[ClassNode], list[FunctionNode], list[AttributeNode], list[ParameterNode], list[dict]]:
     """
     Extract structurally parsed domain objects from a file and raw call dictionaries.
     Delegates entirely to a language-specific builder.
@@ -134,6 +138,7 @@ def extract_file(
         file_path=file_path,
         repo_id=repo_id,
         lang_obj=lang_obj,
+        repo_root=repo_root,
     )
 
     if language == "python":
@@ -148,12 +153,12 @@ def extract_file(
     else:
         raise ValueError(f"Unsupported language builder for {language}")
 
-    module = builder.build_module()
-    classes = builder.build_classes()
-    functions = builder.build_functions()
-    
+    module     = builder.build_module()
+    package    = builder.build_package()
+    classes    = builder.build_classes()
+    functions  = builder.build_functions()
     attributes = getattr(builder, "extracted_attributes", [])
     parameters = getattr(builder, "extracted_parameters", [])
-    calls = builder.build_calls()
+    calls      = builder.build_calls()
 
-    return module, classes, functions, attributes, parameters, calls
+    return module, package, classes, functions, attributes, parameters, calls

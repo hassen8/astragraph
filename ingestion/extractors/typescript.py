@@ -4,10 +4,12 @@ from tree_sitter import Node
 from .extractor import ExtractionContext
 from ..models import (
     ModuleNode,
+    PackageNode,
     ClassNode,
     FunctionNode,
     AttributeNode,
     ParameterNode,
+    make_uuid,
 )
 
 class TypeScriptBuilder:
@@ -27,6 +29,23 @@ class TypeScriptBuilder:
             exported_names=[],
             imported_modules=[],
             is_init=False,
+            repo_id=self.ctx.repo_id,
+        )
+
+    def build_package(self) -> PackageNode:
+        # TypeScript packages are defined by package.json, not directory structure.
+        # Real implementation: walk up from repo_root/dir to find the nearest
+        # package.json and read its "name" field.
+        from pathlib import Path
+        pkg_dir  = str(Path(self.ctx.file_path).parent)
+        pkg_name = pkg_dir.replace("/", ".") if pkg_dir != "." else self.ctx.repo_id
+        return PackageNode(
+            uuid=make_uuid(self.ctx.repo_id, pkg_name),
+            name=pkg_name,
+            directory=pkg_dir,
+            is_namespace=True,
+            has_init=False,
+            init_file=None,
             repo_id=self.ctx.repo_id,
         )
 

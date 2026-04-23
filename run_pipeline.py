@@ -25,11 +25,7 @@ from tree_sitter import Language, Parser
 sys.path.insert(0, str(Path(__file__).parent))
 
 from ingestion.extractors.extractor import extract_file
-from ingestion.models import (
-    PackageNode,
-    RepositoryNode,
-    make_uuid,
-)
+from ingestion.models import RepositoryNode, make_uuid
 from ingestion.relationships import RelationshipResolver, build_repo_fn_lookup
 from ingestion.walker import walk_repo
 
@@ -51,20 +47,6 @@ def _make_repo_node() -> RepositoryNode:
         repo_id=REPO_ID,
     )
 
-
-def _make_package_node(rel_path: str) -> PackageNode:
-    pkg_dir  = str(Path(rel_path).parent)
-    pkg_name = pkg_dir.replace("/", ".") if pkg_dir != "." else REPO_ID
-    has_init = (Path(REPO_PATH) / pkg_dir / "__init__.py").exists()
-    return PackageNode(
-        uuid=make_uuid(REPO_ID, pkg_name),
-        name=pkg_name,
-        directory=pkg_dir,
-        is_namespace=not has_init,
-        has_init=has_init,
-        init_file=str(Path(pkg_dir) / "__init__.py") if has_init else None,
-        repo_id=REPO_ID,
-    )
 
 
 def _hr(char: str = "─", width: int = 70) -> str:
@@ -140,16 +122,15 @@ def main() -> None:
             continue
 
         tree = parser.parse(source)
-        module, classes, functions, attributes, parameters, raw_calls = extract_file(
+        module, package, classes, functions, attributes, parameters, raw_calls = extract_file(
             file_path=rel_path,
             language=language,
             root=tree.root_node,
             source=source,
             lang_obj=lang_obj,
             repo_id=REPO_ID,
+            repo_root=REPO_PATH,
         )
-
-        package = _make_package_node(rel_path)
 
         pass1_rels = resolver.resolve_pass1(
             module=module,
