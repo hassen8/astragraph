@@ -15,7 +15,7 @@ class Config:
 
     # Embeddings
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    embed_model:    str = os.getenv("EMBED_MODEL",    "text-embedding-3-large")
+    embed_model:    str = os.getenv("EMBED_MODEL",    "all-MiniLM-L6-v2")
     embed_batch_size: int = int(os.getenv("EMBED_BATCH_SIZE", "64"))
 
     # Ingestion

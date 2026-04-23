@@ -8,13 +8,13 @@ Pass 1 — per file:
   - Extract entities (module, package, classes, functions, attributes, parameters)
   - Write entities to Neo4j
   - Resolve Pass 1 relationships and write them to Neo4j
-  - Collect raw call dicts for Pass 2
+  - Collect raw call dicts and classes for Pass 2
 
 Pass 2 — after all files:
   - Build repo-wide function lookup
   - Resolve CALLS_UNKNOWN -> CALLS where possible
   - Write CALLS relationships to Neo4j
-  - TODO: write embeddings to vector store
+  - Embed functions + classes and write to Qdrant
 """
 
 from __future__ import annotations
@@ -35,9 +35,17 @@ from .models import (
     RepositoryNode,
     make_uuid,
 )
+from .embedder import (
+    make_class_embed_doc,
+    make_function_embed_doc,
+    should_embed,
+    should_embed_class,
+    Embedder,
+)
 from .relationships import RelationshipResolver, RelationshipWriter, build_repo_fn_lookup
 from .walker import walk_repo
 from .writers.neo4j_writer import Neo4jWriter
+from .writers.vector_writer import VectorWriter
 from graph.schema import init_schema
 
 logger = logging.getLogger(__name__)
@@ -75,8 +83,6 @@ class IngestionPipeline:
     def __init__(self, repo: RepositoryNode, cfg: Config):
         self.repo = repo
         self.cfg  = cfg
-        # TODO: self.embedder      = Embedder(cfg)
-        # TODO: self.vector_writer = VectorWriter(cfg)
 
     def run(
         self,
@@ -117,7 +123,8 @@ class IngestionPipeline:
             )
 
             all_functions: list[FunctionNode] = []
-            all_raw_calls: list[dict]         = []
+            all_classes:  list[ClassNode]    = []
+            all_raw_calls: list[dict]        = []
 
             # ------------------------------------------------------------------
             # Pass 1 — extract, write entities, resolve + write relationships
@@ -184,6 +191,7 @@ class IngestionPipeline:
                 rel_writer.write_relationships(pass1_rels)
 
                 all_functions.extend(functions)
+                all_classes.extend(classes)
                 all_raw_calls.extend(raw_calls)
 
                 logger.debug(
@@ -215,12 +223,28 @@ class IngestionPipeline:
             pass2_rels = resolver.resolve_calls(raw_call_rels, repo_fn_lookup)
             rel_writer.write_relationships(pass2_rels)
 
-            # TODO: embed Tier-1 entities and write to vector store
+            # ------------------------------------------------------------------
+            # Embedding — filter, build docs, embed, write to Qdrant
+            # ------------------------------------------------------------------
+            fn_docs  = [make_function_embed_doc(fn)  for fn in all_functions if should_embed(fn)]
+            cls_docs = [make_class_embed_doc(cls)    for cls in all_classes  if should_embed_class(cls)]
+            docs     = fn_docs + cls_docs
 
             logger.info(
-                "Done — calls=%d  unresolved=%d",
+                "Embedding %d functions + %d classes (%d total, %d skipped)",
+                len(fn_docs), len(cls_docs), len(docs),
+                len(all_functions) + len(all_classes) - len(docs),
+            )
+
+            with Embedder(self.cfg) as embedder, VectorWriter(self.cfg) as vector_writer:
+                embeddings = embedder.embed(docs)
+                vector_writer.write(docs, embeddings)
+
+            logger.info(
+                "Done — calls=%d  unresolved=%d  vectors=%d",
                 sum(1 for r in pass2_rels if r.rel_type == "CALLS"),
                 sum(1 for r in pass2_rels if r.rel_type == "CALLS_UNKNOWN"),
+                len(docs),
             )
 
 

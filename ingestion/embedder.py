@@ -151,9 +151,15 @@ class Embedder:
     """
 
     def __init__(self, cfg: Config) -> None:
-        self.cfg        = cfg
-        self._model     = None   # lazy-loaded on first embed() call
+        self.cfg         = cfg
+        self._model      = None   # lazy-loaded on first embed() call
         self._use_openai = cfg.embed_model.startswith("text-embedding")
+
+    def __enter__(self) -> Embedder:
+        return self
+
+    def __exit__(self, *_) -> None:
+        pass  # no resources to release — model stays in memory until GC
 
     def _load_model(self) -> None:
         """Load the model on first use."""
