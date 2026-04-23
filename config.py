@@ -8,9 +8,10 @@ class Config:
     neo4j_user:     str = os.getenv("NEO4J_USER",     "neo4j")
     neo4j_password: str = os.getenv("NEO4J_PASSWORD", "password")
 
-    # Vector store
-    chroma_path:    str = os.getenv("CHROMA_PATH",    "./chroma_db")
-    collection_name: str = os.getenv("COLLECTION",   "codebase")
+    # Vector store (Qdrant)
+    qdrant_host:     str = os.getenv("QDRANT_HOST",      "localhost")
+    qdrant_port:     int = int(os.getenv("QDRANT_PORT",  "6333"))
+    collection_name: str = os.getenv("COLLECTION",       "codebase")
 
     # Embeddings
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
