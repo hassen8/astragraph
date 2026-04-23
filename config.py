@@ -18,6 +18,12 @@ class Config:
     embed_model:    str = os.getenv("EMBED_MODEL",    "all-MiniLM-L6-v2")
     embed_batch_size: int = int(os.getenv("EMBED_BATCH_SIZE", "64"))
 
+    # LLM / agent
+    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    llm_provider:      str = os.getenv("LLM_PROVIDER",      "anthropic")  # "anthropic" | "ollama"
+    llm_model:         str = os.getenv("LLM_MODEL",         "claude-sonnet-4-6")
+    fulltext_index:    str = os.getenv("FULLTEXT_INDEX",     "functionText")
+
     # Ingestion
     checkpoint_path: str = os.getenv("CHECKPOINT_PATH", "./ingestion_checkpoint.json")
     chunk_line_limit: int = int(os.getenv("CHUNK_LINE_LIMIT", "60"))

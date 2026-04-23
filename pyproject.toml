@@ -5,7 +5,10 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.96.0",
     "click>=8.3.3",
+    "fastapi>=0.136.1",
+    "langgraph>=1.1.9",
     "neo4j>=6.1.0",
     "pathspec>=1.0.4",
     "pytest>=9.0.3",
@@ -13,4 +16,5 @@ dependencies = [
     "sentence-transformers>=5.4.1",
     "tree-sitter>=0.25.2",
     "tree-sitter-python>=0.25.0",
+    "uvicorn>=0.46.0",
 ]
