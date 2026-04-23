@@ -16,10 +16,11 @@ Hierarchy:
 All UUIDs are deterministic — the same entity always produces the same UUID
 across re-ingestion runs, making all Neo4j writes idempotent (MERGE-safe).
 
-Tier system (for vector embeddings):
-    1 = embed + graph  (semantically rich, worth retrieving)
-    2 = graph only     (structurally important, low retrieval value)
-    3 = skip           (noise: test files, auto-generated, trivial delegation)
+Embedding strategy:
+    Functions are embedded as a single EmbedDoc (no chunking — functions are
+    atomic units, not prose). Whether a function gets embedded at all is decided
+    by should_embed(fn) -> bool in ingestion/embedder.py. Functions with no
+    docstring, fewer than 5 lines, and a private name are skipped.
 """
 
 from __future__ import annotations
@@ -188,7 +189,7 @@ class FunctionNode:
     is_staticmethod: bool           # decorated with @staticmethod
     is_overload:    bool            # decorated with @typing.overload
     decorators:     list[str]
-    body_preview:   str             # first 300 chars — used for tiering only
+    body_preview:   str             # first 300 chars — used by should_embed() filter
     full_body:      str             # complete source text of the function
     complexity:     int             # cyclomatic complexity
     repo_id:        str
@@ -336,16 +337,12 @@ class EmbedDoc:
     A single document to be embedded and stored in the vector store.
     The uuid field links back to the Neo4j node via the same deterministic UUID.
 
-    For functions > CHUNK_LINE_LIMIT lines, multiple EmbedDocs are produced
-    per FunctionNode (chunk_index 0..N). All share the same uuid but differ
-    in chunk_index and text.
+    One EmbedDoc per function — no chunking. Functions are atomic units;
+    sliding-window chunking is for prose, not code.
 
-    At query time: deduplicate by uuid before passing context to the LLM.
+    Only produced for functions that pass should_embed() in ingestion/embedder.py.
     """
-    uuid:         str           # matches the Neo4j node UUID exactly
-    chunk_index:  int           # 0 for single-chunk; 0..N for sliding window
-    total_chunks: int
-    text:         str           # the text that gets embedded
-    entity_type:  str           # "function" | "class" | "module" | "attribute"
-    tier:         int           # 1 = embed, 2 = graph-only, 3 = skip
-    metadata:     dict          # file_path, line_start, name, language, repo_id, etc.
+    uuid:        str    # matches the Neo4j node UUID exactly — the join key
+    text:        str    # the text that gets embedded (signature + docstring + body)
+    entity_type: str    # "function" | "class" | "module"
+    metadata:    dict   # file_path, line_start, name, language, repo_id, etc.
