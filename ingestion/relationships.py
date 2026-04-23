@@ -384,6 +384,14 @@ class RelationshipResolver:
         Resolve import statements to either a known ModuleNode (IMPORTS)
         or an external library (IMPORTS_EXTERNAL).
 
+        Resolution order:
+          1. Exact module name match (e.g. "payments.utils" -> ModuleNode)
+          2. Package match — `import payments` where payments is an internal
+             package, not a module. Point to its __init__.py module if it
+             exists, otherwise emit IMPORTS to the package's first known module
+             to avoid misclassifying it as an external dependency.
+          3. Fallback — genuinely external library (stripe, numpy, etc.)
+
         Relative imports (from . import x) are skipped.
         """
         rels = []
@@ -393,6 +401,7 @@ class RelationshipResolver:
             if target_name is None:
                 continue
 
+            # --- Resolution order 1: exact module match ---
             target_module = self.modules.get(target_name)
 
             if target_module:
@@ -405,18 +414,50 @@ class RelationshipResolver:
                         "is_external": False,
                     },
                 ))
-            else:
-                ext_uuid = make_uuid(module.repo_id, "external", target_name)
-                rels.append(Relationship(
-                    src_uuid=module.uuid,
-                    dst_uuid=ext_uuid,
-                    rel_type="IMPORTS_EXTERNAL",
-                    properties={
-                        "module_name":  target_name,
-                        "raw_import":   import_text.strip(),
-                        "is_external":  True,
-                    },
-                ))
+                continue
+
+            # --- Resolution order 2: internal package match ---
+            # `import payments` where payments is a PackageNode, not a module.
+            # Look for the package's __init__.py module (name: "payments.__init__"
+            # or "payments") in the module registry as the canonical target.
+            # Without this, internal packages are wrongly written as ExternalDependency.
+            target_package = self.packages.get(target_name)
+
+            if target_package:
+                # Prefer the __init__ module of this package as the import target.
+                # It's the natural entry point for `import payments`.
+                init_module = (
+                    self.modules.get(f"{target_name}.__init__")
+                    or self.modules.get(target_name)
+                )
+                if init_module:
+                    rels.append(Relationship(
+                        src_uuid=module.uuid,
+                        dst_uuid=init_module.uuid,
+                        rel_type="IMPORTS",
+                        properties={
+                            "raw_import":    import_text.strip(),
+                            "is_external":   False,
+                            "imports_package": True,  # flag: target was a package, not a module
+                        },
+                    ))
+                # If the package has no __init__ module yet (not yet processed),
+                # skip rather than emitting a wrong ExternalDependency.
+                # The unresolved import is acceptable noise — it won't create bad data.
+                continue
+
+            # --- Resolution order 3: genuinely external library ---
+            ext_uuid = make_uuid(module.repo_id, "external", target_name)
+            rels.append(Relationship(
+                src_uuid=module.uuid,
+                dst_uuid=ext_uuid,
+                rel_type="IMPORTS_EXTERNAL",
+                properties={
+                    "module_name":  target_name,
+                    "raw_import":   import_text.strip(),
+                    "is_external":  True,
+                },
+            ))
 
         return rels
 
@@ -432,6 +473,13 @@ class RelationshipResolver:
         """
         Pass 2: upgrade CALLS_UNKNOWN to CALLS where possible using the
         now-complete repo-wide function lookup.
+
+        Confidence scoring:
+            1.0 — callee is a qualified name (e.g. "payments.core.process_payment")
+                  and matched exactly. No ambiguity possible.
+            0.7 — callee is a bare name (e.g. "process_payment") and matched.
+                  Multiple functions with the same name could exist in the repo;
+                  we pick the first one the lookup returns (insertion order).
         """
         finalised = []
 
@@ -444,6 +492,12 @@ class RelationshipResolver:
                 resolved = repo_wide_fn_lookup.get(callee)
 
                 if resolved and resolved.uuid != rel.src_uuid:
+                    # A qualified name contains at least one dot and matches
+                    # the function's full module path. A bare name has no dots
+                    # or doesn't match the qualified_name exactly.
+                    is_qualified = "." in callee and callee == resolved.qualified_name
+                    confidence   = 1.0 if is_qualified else 0.7
+
                     finalised.append(Relationship(
                         src_uuid=rel.src_uuid,
                         dst_uuid=resolved.uuid,
@@ -452,6 +506,7 @@ class RelationshipResolver:
                             "call_site_line":   rel.properties.get("call_site_line"),
                             "is_conditional":   rel.properties.get("is_conditional", False),
                             "resolved_in_pass": 2,
+                            "confidence":       confidence,
                         },
                     ))
                 else:

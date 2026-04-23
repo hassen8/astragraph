@@ -6,14 +6,14 @@ Orchestrates the full two-pass ingestion run.
 Pass 1 — per file:
   - Parse source
   - Extract entities (module, package, classes, functions, attributes, parameters)
-  - Resolve Pass 1 relationships (PART_OF, CONTAINS, DEFINED_IN, METHOD_OF,
-    DEFINES_ATTR, HAS_PARAM, INHERITS, IMPORTS)
+  - Write entities to Neo4j
+  - Resolve Pass 1 relationships and write them to Neo4j
   - Collect raw call dicts for Pass 2
 
 Pass 2 — after all files:
   - Build repo-wide function lookup
   - Resolve CALLS_UNKNOWN -> CALLS where possible
-  - TODO: write entities + relationships to Neo4j
+  - Write CALLS relationships to Neo4j
   - TODO: write embeddings to vector store
 """
 
@@ -24,6 +24,7 @@ from pathlib import Path
 
 from tree_sitter import Language, Parser
 
+from config import Config
 from .extractors.extractor import extract_file
 from .models import (
     ClassNode,
@@ -34,8 +35,10 @@ from .models import (
     RepositoryNode,
     make_uuid,
 )
-from .relationships import RelationshipResolver, build_repo_fn_lookup
+from .relationships import RelationshipResolver, RelationshipWriter, build_repo_fn_lookup
 from .walker import walk_repo
+from .writers.neo4j_writer import Neo4jWriter
+from graph.schema import init_schema
 
 logger = logging.getLogger(__name__)
 
@@ -69,140 +72,156 @@ def _get_lang_obj(language: str) -> Language:
 
 class IngestionPipeline:
 
-    def __init__(self, repo: RepositoryNode):
+    def __init__(self, repo: RepositoryNode, cfg: Config):
         self.repo = repo
-        # TODO: self.neo4j_writer  = Neo4jWriter(cfg)
-        # TODO: self.rel_writer    = RelationshipWriter(driver)
-        # TODO: self.vector_writer = VectorWriter(cfg)
+        self.cfg  = cfg
         # TODO: self.embedder      = Embedder(cfg)
+        # TODO: self.vector_writer = VectorWriter(cfg)
 
     def run(
         self,
         repo_path: str,
         languages: list[str] | None = None,
-    ) -> tuple[list[Relationship], list[Relationship]]:
+    ) -> None:
         """
-        Run the two-pass pipeline.
+        Run the two-pass ingestion pipeline.
 
-        Returns (pass1_rels, pass2_rels) — useful for testing and dry-run
-        inspection until Neo4j writes are wired up.
+        Pass 1 writes entities and structural relationships file-by-file.
+        Pass 2 resolves and writes CALLS relationships repo-wide.
         """
         repo_id = self.repo.repo_id
+        cfg     = self.cfg
 
-        # Shared registries accumulate across files for cross-file resolution
-        module_registry:  dict[str, ModuleNode]  = {}
-        class_registry:   dict[str, ClassNode]   = {}
-        package_registry: dict[str, PackageNode] = {}
+        with Neo4jWriter(cfg.neo4j_uri, cfg.neo4j_user, cfg.neo4j_password) as entity_writer:
 
-        resolver = RelationshipResolver(
-            repo=self.repo,
-            module_registry=module_registry,
-            class_registry=class_registry,
-            package_registry=package_registry,
-        )
+            # Schema init is idempotent — safe to call every run.
+            # Creates uniqueness constraints and indexes if they don't exist yet.
+            init_schema(entity_writer._driver)
 
-        all_functions:  list[FunctionNode] = []
-        all_raw_calls:  list[dict]         = []
-        all_pass1_rels: list[Relationship] = []
+            rel_writer = RelationshipWriter(entity_writer._driver)
 
-        # ------------------------------------------------------------------
-        # Pass 1 — extract entities + resolve per-file relationships
-        # ------------------------------------------------------------------
-        logger.info("Pass 1: extracting entities from %s", repo_path)
+            # Write the repository root node first — top-level packages need
+            # a destination for their PART_OF edges.
+            entity_writer.write_repository(self.repo)
 
-        parsers: dict[str, Parser] = {}
+            # Shared registries accumulate across files for cross-file resolution
+            module_registry:  dict[str, ModuleNode]  = {}
+            class_registry:   dict[str, ClassNode]   = {}
+            package_registry: dict[str, PackageNode] = {}
 
-        files = list(walk_repo(repo_path))
-        for i, (rel_path, language) in enumerate(files, 1):
+            resolver = RelationshipResolver(
+                repo=self.repo,
+                module_registry=module_registry,
+                class_registry=class_registry,
+                package_registry=package_registry,
+            )
 
-            if languages and language not in languages:
-                continue
+            all_functions: list[FunctionNode] = []
+            all_raw_calls: list[dict]         = []
 
-            abs_path = Path(repo_path) / rel_path
-            try:
-                source = abs_path.read_bytes()
-            except OSError as exc:
-                logger.warning("Could not read %s: %s", rel_path, exc)
-                continue
+            # ------------------------------------------------------------------
+            # Pass 1 — extract, write entities, resolve + write relationships
+            # ------------------------------------------------------------------
+            logger.info("Pass 1: extracting entities from %s", repo_path)
 
-            try:
-                lang_obj = _get_lang_obj(language)
-            except (ValueError, ImportError) as exc:
-                logger.warning("No language support for %s (%s): %s", rel_path, language, exc)
-                continue
+            parsers: dict[str, Parser] = {}
+            files = list(walk_repo(repo_path))
 
-            if language not in parsers:
-                parsers[language] = Parser(lang_obj)
-            root = parsers[language].parse(source).root_node
+            for i, (rel_path, language) in enumerate(files, 1):
 
-            try:
-                module, package, classes, functions, attributes, parameters, raw_calls = extract_file(
-                    file_path=rel_path,
-                    language=language,
-                    root=root,
-                    source=source,
-                    lang_obj=lang_obj,
-                    repo_id=repo_id,
-                    repo_root=repo_path,
+                if languages and language not in languages:
+                    continue
+
+                abs_path = Path(repo_path) / rel_path
+                try:
+                    source = abs_path.read_bytes()
+                except OSError as exc:
+                    logger.warning("Could not read %s: %s", rel_path, exc)
+                    continue
+
+                try:
+                    lang_obj = _get_lang_obj(language)
+                except (ValueError, ImportError) as exc:
+                    logger.warning("No language support for %s (%s): %s", rel_path, language, exc)
+                    continue
+
+                if language not in parsers:
+                    parsers[language] = Parser(lang_obj)
+                root = parsers[language].parse(source).root_node
+
+                try:
+                    module, package, classes, functions, attributes, parameters, raw_calls = extract_file(
+                        file_path=rel_path,
+                        language=language,
+                        root=root,
+                        source=source,
+                        lang_obj=lang_obj,
+                        repo_id=repo_id,
+                        repo_root=repo_path,
+                    )
+                except Exception as exc:
+                    logger.warning("Extraction failed for %s: %s", rel_path, exc)
+                    continue
+
+                # Write entities — nodes must exist before relationships can reference them
+                entity_writer.write_package(package)
+                entity_writer.write_module(module)
+                entity_writer.write_classes(classes)
+                entity_writer.write_functions(functions)
+                entity_writer.write_attributes(attributes)
+                entity_writer.write_parameters(parameters)
+
+                # Resolve and write structural relationships for this file
+                pass1_rels = resolver.resolve_pass1(
+                    module=module,
+                    package=package,
+                    classes=classes,
+                    functions=functions,
+                    attributes=attributes,
+                    parameters=parameters,
                 )
-            except Exception as exc:
-                logger.warning("Extraction failed for %s: %s", rel_path, exc)
-                continue
+                rel_writer.write_external_dependencies(pass1_rels)
+                rel_writer.write_relationships(pass1_rels)
 
-            pass1_rels = resolver.resolve_pass1(
-                module=module,
-                package=package,
-                classes=classes,
-                functions=functions,
-                attributes=attributes,
-                parameters=parameters,
+                all_functions.extend(functions)
+                all_raw_calls.extend(raw_calls)
+
+                logger.debug(
+                    "[%d/%d] %s — cls=%d fn=%d rels=%d",
+                    i, len(files), rel_path, len(classes), len(functions), len(pass1_rels),
+                )
+
+            # ------------------------------------------------------------------
+            # Pass 2 — resolve CALLS across the whole repo and write
+            # ------------------------------------------------------------------
+            logger.info("Pass 2: resolving %d call sites", len(all_raw_calls))
+
+            repo_fn_lookup = build_repo_fn_lookup(all_functions)
+
+            raw_call_rels = [
+                Relationship(
+                    src_uuid=c["src_uuid"],
+                    dst_uuid=None,
+                    rel_type="CALLS_UNKNOWN",
+                    properties={
+                        "callee":         c["callee"],
+                        "call_site_line": c["call_site_line"],
+                        "is_conditional": c["is_conditional"],
+                    },
+                )
+                for c in all_raw_calls
+            ]
+
+            pass2_rels = resolver.resolve_calls(raw_call_rels, repo_fn_lookup)
+            rel_writer.write_relationships(pass2_rels)
+
+            # TODO: embed Tier-1 entities and write to vector store
+
+            logger.info(
+                "Done — calls=%d  unresolved=%d",
+                sum(1 for r in pass2_rels if r.rel_type == "CALLS"),
+                sum(1 for r in pass2_rels if r.rel_type == "CALLS_UNKNOWN"),
             )
-
-            # TODO: write module, package, classes, functions, attributes, parameters to Neo4j
-
-            all_functions.extend(functions)
-            all_raw_calls.extend(raw_calls)
-            all_pass1_rels.extend(pass1_rels)
-
-            logger.debug(
-                "[%d/%d] %s — cls=%d fn=%d rels=%d",
-                i, len(files), rel_path, len(classes), len(functions), len(pass1_rels),
-            )
-
-        # ------------------------------------------------------------------
-        # Pass 2 — resolve CALLS across the whole repo
-        # ------------------------------------------------------------------
-        logger.info("Pass 2: resolving %d call sites", len(all_raw_calls))
-
-        repo_fn_lookup = build_repo_fn_lookup(all_functions)
-
-        raw_call_rels = [
-            Relationship(
-                src_uuid=c["src_uuid"],
-                dst_uuid=None,
-                rel_type="CALLS_UNKNOWN",
-                properties={
-                    "callee":          c["callee"],
-                    "call_site_line":  c["call_site_line"],
-                    "is_conditional":  c["is_conditional"],
-                },
-            )
-            for c in all_raw_calls
-        ]
-
-        pass2_rels = resolver.resolve_calls(raw_call_rels, repo_fn_lookup)
-
-        # TODO: write pass2_rels to Neo4j
-        # TODO: embed Tier-1 entities and write to vector store
-
-        logger.info(
-            "Done — pass1_rels=%d  calls=%d  unresolved=%d",
-            len(all_pass1_rels),
-            sum(1 for r in pass2_rels if r.rel_type == "CALLS"),
-            sum(1 for r in pass2_rels if r.rel_type == "CALLS_UNKNOWN"),
-        )
-
-        return all_pass1_rels, pass2_rels
 
 
 # ---------------------------------------------------------------------------
