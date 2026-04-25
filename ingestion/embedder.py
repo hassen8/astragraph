@@ -212,6 +212,14 @@ class Embedder:
         )
         return [v.tolist() for v in vectors]
 
+    def embed_one(self, text: str) -> list[float]:
+        """Embed a single string. Used by the query agent to embed the user's query."""
+        return self.embed([EmbedDoc(uuid="", text=text, entity_type="query", metadata={})])[0]
+
+    def close(self) -> None:
+        """Release model resources."""
+        self._model = None
+
     def _embed_openai(self, texts: list[str]) -> list[list[float]]:
         """
         Embed using the OpenAI embeddings API, batched at cfg.embed_batch_size.
@@ -250,6 +258,9 @@ def make_function_embed_doc(fn: FunctionNode) -> EmbedDoc:
             "repo_id":        fn.repo_id,
             "is_method":      fn.is_method,
             "is_async":       fn.is_async,
+            "signature":      fn.signature,
+            "docstring":      fn.docstring,
+            "full_body":      fn.full_body,
         },
     )
 

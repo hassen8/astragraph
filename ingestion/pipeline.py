@@ -42,11 +42,10 @@ from .embedder import (
     should_embed_class,
     Embedder,
 )
-from .relationships import RelationshipResolver, RelationshipWriter, build_repo_fn_lookup
+from .relationships import RelationshipResolver, build_repo_fn_lookup
 from .walker import walk_repo
-from .writers.neo4j_writer import Neo4jWriter
-from .writers.vector_writer import VectorWriter
-from graph.schema import init_schema
+from storage.neo4j_store import Neo4jStore
+from storage.qdrant_store import QdrantStore
 
 logger = logging.getLogger(__name__)
 
@@ -98,17 +97,15 @@ class IngestionPipeline:
         repo_id = self.repo.repo_id
         cfg     = self.cfg
 
-        with Neo4jWriter(cfg.neo4j_uri, cfg.neo4j_user, cfg.neo4j_password) as entity_writer:
+        with Neo4jStore(cfg) as graph_store:
 
             # Schema init is idempotent — safe to call every run.
-            # Creates uniqueness constraints and indexes if they don't exist yet.
-            init_schema(entity_writer._driver)
-
-            rel_writer = RelationshipWriter(entity_writer._driver)
+            # Creates uniqueness constraints, range indexes, and the fulltext index.
+            graph_store.init_schema()
 
             # Write the repository root node first — top-level packages need
             # a destination for their PART_OF edges.
-            entity_writer.write_repository(self.repo)
+            graph_store.write_repository(self.repo)
 
             # Shared registries accumulate across files for cross-file resolution
             module_registry:  dict[str, ModuleNode]  = {}
@@ -171,12 +168,12 @@ class IngestionPipeline:
                     continue
 
                 # Write entities — nodes must exist before relationships can reference them
-                entity_writer.write_package(package)
-                entity_writer.write_module(module)
-                entity_writer.write_classes(classes)
-                entity_writer.write_functions(functions)
-                entity_writer.write_attributes(attributes)
-                entity_writer.write_parameters(parameters)
+                graph_store.write_package(package)
+                graph_store.write_module(module)
+                graph_store.write_classes(classes)
+                graph_store.write_functions(functions)
+                graph_store.write_attributes(attributes)
+                graph_store.write_parameters(parameters)
 
                 # Resolve and write structural relationships for this file
                 pass1_rels = resolver.resolve_pass1(
@@ -187,8 +184,8 @@ class IngestionPipeline:
                     attributes=attributes,
                     parameters=parameters,
                 )
-                rel_writer.write_external_dependencies(pass1_rels)
-                rel_writer.write_relationships(pass1_rels)
+                graph_store.write_external_dependencies(pass1_rels)
+                graph_store.write_relationships(pass1_rels)
 
                 all_functions.extend(functions)
                 all_classes.extend(classes)
@@ -221,10 +218,10 @@ class IngestionPipeline:
             ]
 
             pass2_rels = resolver.resolve_calls(raw_call_rels, repo_fn_lookup)
-            rel_writer.write_relationships(pass2_rels)
+            graph_store.write_relationships(pass2_rels)
 
             # ------------------------------------------------------------------
-            # Embedding — filter, build docs, embed, write to Qdrant
+            # Embedding — filter, build docs, embed, write to vector store
             # ------------------------------------------------------------------
             fn_docs  = [make_function_embed_doc(fn)  for fn in all_functions if should_embed(fn)]
             cls_docs = [make_class_embed_doc(cls)    for cls in all_classes  if should_embed_class(cls)]
@@ -236,9 +233,9 @@ class IngestionPipeline:
                 len(all_functions) + len(all_classes) - len(docs),
             )
 
-            with Embedder(self.cfg) as embedder, VectorWriter(self.cfg) as vector_writer:
+            with Embedder(self.cfg) as embedder, QdrantStore(self.cfg) as vector_store:
                 embeddings = embedder.embed(docs)
-                vector_writer.write(docs, embeddings)
+                vector_store.upsert(docs, embeddings)
 
             logger.info(
                 "Done — calls=%d  unresolved=%d  vectors=%d",

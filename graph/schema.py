@@ -95,3 +95,14 @@ def init_schema(driver: Driver) -> None:
                     f"CREATE INDEX {index_name} IF NOT EXISTS "
                     f"FOR (n:{label}) ON (n.{prop})"
                 )
+
+        # ------------------------------------------------------------------ #
+        # Fullbody index for BM25 keyword search (used by the query agent)
+        # Covers the four properties most likely to match natural-language
+        # queries: function name, qualified path, docstring, and body preview.
+        # The index name matches config.py's `full_index` default.
+        # ------------------------------------------------------------------ #
+        session.run(
+            "CREATE FULLBODY INDEX functionText IF NOT EXISTS "
+            "FOR (n:Function) ON EACH [n.name, n.qualified_name, n.docstring, n.full_body]"
+        )
