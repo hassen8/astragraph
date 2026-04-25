@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchValue
+from qdrant_client.models import FieldCondition, Filter, MatchValue, NamedVector, Query
 
 from config import Config
 from ingestion.models import EmbedDoc
@@ -74,14 +74,14 @@ class QdrantStore:
                 must=[FieldCondition(key="repo_id", match=MatchValue(value=repo_id))]
             )
 
-        hits = self._client.search(
+        results = self._client.query_points(
             collection_name=self._cfg.collection_name,
-            query_vector=vector,
+            query=vector,
             query_filter=payload_filter,
             limit=top_k,
             with_payload=True,
         )
-        return [_hit_to_dict(h) for h in hits]
+        return [_hit_to_dict(h) for h in results.points]
 
 
 def _hit_to_dict(hit) -> dict:

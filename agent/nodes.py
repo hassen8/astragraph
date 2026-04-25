@@ -41,9 +41,40 @@ def route_query(state: AgentState) -> dict:
     return {"mode": "hybrid"}
 
 
+import re as _re
+
+def _extract_name(query: str) -> str | None:
+    """Pull a bare function/class name from a structural query."""
+    # match "what calls foo", "callers of foo", "who calls foo", "calls foo?"
+    m = _re.search(r'\b(?:calls?|callers?\s+of|callees?\s+of|inherits?\s+from|subclasses?\s+of)\s+[`"\']?(\w+)[`"\']?', query, _re.I)
+    if m:
+        return m.group(1)
+    # last resort: last word that looks like an identifier
+    tokens = _re.findall(r'[`"\'](\w+)[`"\']|(\b[a-z_]\w+\b)', query)
+    flat = [a or b for a, b in tokens if (a or b)]
+    return flat[-1] if flat else None
+
+
 def make_graph_node(retriever: GraphRetriever) -> Callable:
     def graph_node(state: AgentState) -> dict:
-        hits = retriever.bm25_search(state["query"], state.get("repo_id"), state["top_k"])
+        q       = state["query"].lower()
+        repo_id = state.get("repo_id")
+        top_k   = state["top_k"]
+        name    = _extract_name(state["query"])
+
+        # Dispatch to the right structural method when the intent is clear.
+        if name and any(k in q for k in ("caller", "callers", "what calls", "who calls")):
+            hits = retriever.callers(name, repo_id, top_k)
+        elif name and any(k in q for k in ("callee", "callees", "what does", "calls what")):
+            hits = retriever.callees(name, repo_id, top_k)
+        elif name and any(k in q for k in ("subclass", "subclasses", "inherits from", "extends")):
+            hits = retriever.subclasses(name, repo_id, top_k)
+        elif name and any(k in q for k in ("method", "methods")):
+            hits = retriever.methods(name, repo_id)
+        else:
+            # Fall back to BM25 for everything else (module contents, imports, etc.)
+            hits = retriever.bm25_search(state["query"], repo_id, top_k)
+
         return {"graph_results": hits}
     return graph_node
 
@@ -77,6 +108,12 @@ def make_hybrid_node(
 def make_synthesize_node(cfg: Config) -> Callable:
     if cfg.llm_provider == "ollama":
         _http = httpx.Client(base_url=cfg.ollama_base_url, timeout=120.0)
+    elif cfg.llm_provider == "openai_compat":
+        _http = httpx.Client(
+            base_url=cfg.openai_compat_url,
+            headers={"Authorization": f"Bearer {cfg.openai_compat_apikey}"},
+            timeout=60.0,
+        )
     else:
         _anthropic = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
 
@@ -126,6 +163,16 @@ def make_synthesize_node(cfg: Config) -> Callable:
             })
             resp.raise_for_status()
             answer = resp.json()["message"]["content"]
+        elif cfg.llm_provider == "openai_compat":
+            resp = _http.post("/chat/completions", json={
+                "model": cfg.llm_model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": user_msg},
+                ],
+            })
+            resp.raise_for_status()
+            answer = resp.json()["choices"][0]["message"]["content"]
         else:
             response = _anthropic.messages.create(
                 model=cfg.llm_model,

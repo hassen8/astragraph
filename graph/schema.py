@@ -103,6 +103,6 @@ def init_schema(driver: Driver) -> None:
         # The index name matches config.py's `full_index` default.
         # ------------------------------------------------------------------ #
         session.run(
-            "CREATE FULLBODY INDEX functionText IF NOT EXISTS "
+            "CREATE FULLTEXT INDEX functionText IF NOT EXISTS "
             "FOR (n:Function) ON EACH [n.name, n.qualified_name, n.docstring, n.full_body]"
         )

@@ -19,11 +19,13 @@ class Config:
     embed_batch_size: int = int(os.getenv("EMBED_BATCH_SIZE", "64"))
 
     # LLM / agent
-    anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
-    llm_provider:      str = os.getenv("LLM_PROVIDER",      "anthropic")  # "anthropic" | "ollama"
-    llm_model:         str = os.getenv("LLM_MODEL",         "claude-sonnet-4-6")
-    ollama_base_url:   str = os.getenv("OLLAMA_BASE_URL",   "http://localhost:11434")
-    fulltext_index:    str = os.getenv("FULLTEXT_INDEX",     "functionText")
+    anthropic_api_key:    str = os.getenv("ANTHROPIC_API_KEY",    "")
+    llm_provider:         str = os.getenv("LLM_PROVIDER",         "anthropic")  # "anthropic" | "ollama" | "openai_compat"
+    llm_model:            str = os.getenv("LLM_MODEL",            "claude-sonnet-4-6")
+    ollama_base_url:      str = os.getenv("OLLAMA_BASE_URL",      "http://localhost:11434")
+    openai_compat_url:    str = os.getenv("OPENAI_COMPAT_URL",    "https://api.groq.com/openai/v1")
+    openai_compat_apikey: str = os.getenv("OPENAI_COMPAT_APIKEY", "")
+    fulltext_index:       str = os.getenv("FULLTEXT_INDEX",       "functionText")
 
     # Ingestion
     checkpoint_path: str = os.getenv("CHECKPOINT_PATH", "./ingestion_checkpoint.json")
