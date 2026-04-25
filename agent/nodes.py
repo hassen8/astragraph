@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Callable
 
 import anthropic
+import httpx
 
 from agent.retrievers.graph_retriever import GraphRetriever
 from agent.retrievers.vector_retriever import VectorRetriever
@@ -74,7 +75,10 @@ def make_hybrid_node(
 
 
 def make_synthesize_node(cfg: Config) -> Callable:
-    client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
+    if cfg.llm_provider == "ollama":
+        _http = httpx.Client(base_url=cfg.ollama_base_url, timeout=120.0)
+    else:
+        _anthropic = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
 
     def synthesize_node(state: AgentState) -> dict:
         mode = state["mode"]
@@ -111,13 +115,25 @@ def make_synthesize_node(cfg: Config) -> Callable:
             + "\n\n".join(context_blocks)
         ) if context_blocks else f"Question: {state['query']}\n\n(No relevant code found.)"
 
-        response = client.messages.create(
-            model=cfg.llm_model,
-            max_tokens=1024,
-            system=system,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        answer = response.content[0].text
+        if cfg.llm_provider == "ollama":
+            resp = _http.post("/api/chat", json={
+                "model": cfg.llm_model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": user_msg},
+                ],
+                "stream": False,
+            })
+            resp.raise_for_status()
+            answer = resp.json()["message"]["content"]
+        else:
+            response = _anthropic.messages.create(
+                model=cfg.llm_model,
+                max_tokens=1024,
+                system=system,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            answer = response.content[0].text
 
         # Provenance: omit full_body to keep response payload lean.
         provenance = [
