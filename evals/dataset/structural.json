@@ -1,0 +1,235 @@
+[
+  {
+    "id": "callers_solve_dependencies",
+    "query": "what calls solve_dependencies?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "214b2f77-ef0b-b7e2-e8a0-78838ac6da05",
+      "1d570fd8-d01b-9ec9-9e9c-737a2aece97d",
+      "4512ee86-31ed-c4d5-4ef5-b50380ecb341"
+    ],
+    "ground_truth_names": ["app", "get_request_handler", "get_websocket_app"],
+    "cypher": "MATCH (c:Function)-[:CALLS]->(f:Function {name:'solve_dependencies', repo_id:'fastapi'}) RETURN c.uuid, c.name"
+  },
+  {
+    "id": "callers_run_endpoint_function",
+    "query": "what calls run_endpoint_function?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "214b2f77-ef0b-b7e2-e8a0-78838ac6da05",
+      "1d570fd8-d01b-9ec9-9e9c-737a2aece97d"
+    ],
+    "ground_truth_names": ["app", "get_request_handler"],
+    "cypher": "MATCH (c:Function)-[:CALLS]->(f:Function {name:'run_endpoint_function', repo_id:'fastapi'}) RETURN c.uuid, c.name"
+  },
+  {
+    "id": "callers_get_dependant",
+    "query": "what calls get_dependant?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "b7e7db6d-c33c-50db-b800-5cb067712564",
+      "47cd56c2-120b-5aaa-2d9f-ef8ce94b10f1",
+      "887ad42f-d9b5-01c6-1a83-359df1f50316",
+      "ca13b1bf-634f-d0d4-e21a-50351ba17503"
+    ],
+    "ground_truth_names": [
+      "APIWebSocketRoute.__init__",
+      "get_parameterless_sub_dependant",
+      "solve_dependencies",
+      "APIRoute.__init__"
+    ],
+    "cypher": "MATCH (c:Function)-[:CALLS]->(f:Function {name:'get_dependant', repo_id:'fastapi'}) RETURN c.uuid, c.name"
+  },
+  {
+    "id": "callers_add_api_route",
+    "query": "what calls add_api_route?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "401d3e84-ce38-97ea-4285-a30fcdfd0ace",
+      "ad7df221-aeb0-2a8a-e1a5-29cdbf2c6286",
+      "e6a6a7d5-37b6-9097-dadb-4c2a73c368fd",
+      "b67bd969-c1cd-6c38-8e66-5795a8e70164",
+      "37617f01-4837-21c5-1e4c-baa21cbae437"
+    ],
+    "ground_truth_names": [
+      "APIRouter.decorator",
+      "FastAPI.add_api_route",
+      "APIRouter.include_router",
+      "FastAPI.api_route",
+      "APIRouter.api_route"
+    ],
+    "cypher": "MATCH (c:Function)-[:CALLS]->(f:Function {name:'add_api_route', repo_id:'fastapi'}) RETURN c.uuid, c.name"
+  },
+  {
+    "id": "callers_include_router",
+    "query": "what calls include_router?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "77e1ec12-f9cf-b1bf-ae24-f7258d3c37d2"
+    ],
+    "ground_truth_names": ["FastAPI.include_router"],
+    "cypher": "MATCH (c:Function)-[:CALLS]->(f:Function {name:'include_router', repo_id:'fastapi'}) RETURN c.uuid, c.name"
+  },
+  {
+    "id": "callers_serialize_response",
+    "query": "what calls serialize_response?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "214b2f77-ef0b-b7e2-e8a0-78838ac6da05",
+      "1d570fd8-d01b-9ec9-9e9c-737a2aece97d"
+    ],
+    "ground_truth_names": ["app", "get_request_handler"],
+    "cypher": "MATCH (c:Function)-[:CALLS]->(f:Function {name:'serialize_response', repo_id:'fastapi'}) RETURN c.uuid, c.name"
+  },
+  {
+    "id": "callers_request_response",
+    "query": "what calls request_response?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "ca13b1bf-634f-d0d4-e21a-50351ba17503"
+    ],
+    "ground_truth_names": ["APIRoute.__init__"],
+    "cypher": "MATCH (c:Function)-[:CALLS]->(f:Function {name:'request_response', repo_id:'fastapi'}) RETURN c.uuid, c.name"
+  },
+  {
+    "id": "callees_get_request_handler",
+    "query": "what does get_request_handler call?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "ecf0ed3f-c72f-255b-62cf-745ee6249b95",
+      "887ad42f-d9b5-01c6-1a83-359df1f50316",
+      "d4a736d8-89b6-5291-28d2-06c47404c505",
+      "96e9214b-aafb-2f09-6cb7-397b26043d29",
+      "9ee38dcc-14fe-16e8-7842-686941bf7812",
+      "a4c473c8-87ff-dfc7-0391-8cfec27c786c",
+      "2cfd5710-b0b3-6339-7ea3-12af95eae4ba",
+      "525de5e3-5c15-65fa-d267-abd118ec3e1e",
+      "eea83f0b-10bf-96f7-e289-867e9cf6c1e9",
+      "7030d84e-8d31-bfee-10d6-f52d4dd92202",
+      "b6635cf5-f91f-538b-b8f1-b8aa7d015a62",
+      "e275dedf-ce81-e51f-2758-b34531cf0cd1",
+      "6a468f13-9d44-6ebf-26f0-510a156e359f",
+      "d23370fb-079a-b7ec-7c9e-6f7a03fd4a5a",
+      "e42a71b2-493e-6ace-e1a5-1679dbdaba25",
+      "d7bd08fd-6045-95b5-24ca-a7bf9751decc",
+      "04780436-f0db-7e41-c2a4-3433aa68c65f",
+      "5b3f0621-da0b-c397-9983-1500ae4f2687",
+      "0e815243-f2ae-6a4f-3565-b6fe45d7ed78",
+      "998457b3-1b15-7f4e-4f2c-28f8f6cb8ac8",
+      "b570bb8c-b015-eb28-71e3-99f5d806e192",
+      "09447c00-d320-308c-f98c-5a5e4c789abe",
+      "0c7300a3-184c-9274-5407-4cd2ef0a00b9"
+    ],
+    "ground_truth_names": [
+      "run_endpoint_function", "solve_dependencies", "serialize_response",
+      "jsonable_encoder", "_extract_endpoint_context", "_build_response_args",
+      "is_body_allowed_for_status_code", "lenient_issubclass",
+      "_sync_stream_jsonl", "_sse_with_checkpoints", "_async_stream_jsonl",
+      "_async_stream_raw", "_serialize_item", "_serialize_data",
+      "_serialize_sse_item", "_sse_producer_cm", "format_sse_event",
+      "Default", "ModelField.validate", "ModelField.serialize_json",
+      "_OrjsonModule.dumps", "GzipRequest.body", "APIRouter.get"
+    ],
+    "cypher": "MATCH (f:Function {name:'get_request_handler', repo_id:'fastapi'})-[:CALLS]->(c:Function) RETURN c.uuid, c.name"
+  },
+  {
+    "id": "methods_fastapi_class",
+    "query": "what methods does the FastAPI class have?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "0f2cf0dc-644d-99f3-d66e-68dc7e1bdb8d",
+      "2feb53c3-bb68-79b6-92dc-52f22f86d2b0",
+      "8c15d9d4-8722-c7e4-5579-19932e07264e",
+      "ced47fa7-4bd2-38f9-4daf-e4716aeb8131",
+      "ae226969-b944-eda7-b3f1-11df6f26f369",
+      "c17a0265-9b52-13de-94dc-b124d2a71a7f",
+      "8f1c6a51-4500-79b1-3bc7-e5ab8862823c",
+      "adf3a1be-306e-c257-9844-2bd5ed7d3aea",
+      "ad7df221-aeb0-2a8a-e1a5-29cdbf2c6286",
+      "b67bd969-c1cd-6c38-8e66-5795a8e70164",
+      "1bde389a-d9ef-bd4f-27c6-73ac3077153a",
+      "7b92e3f3-2c17-3e7c-7148-b0b433586ce7",
+      "d8f25817-2960-24c8-62f1-8020a6e271ab",
+      "c81d44ff-1aff-b9dd-cf9f-af20b1609da9",
+      "610d88ac-7ca7-d785-84aa-9673aa25ed18",
+      "ad15045c-eafa-f29f-0128-fac9969a13a4",
+      "802ec10d-d916-b16d-fd5d-83624ef5394e",
+      "1cd4d56a-04e5-ea65-126a-db4920435696",
+      "911aa120-4f06-ef1a-436e-d8f234534a6b",
+      "2b86b616-4278-e9cb-65c8-24f3f19ded16",
+      "77e1ec12-f9cf-b1bf-ae24-f7258d3c37d2",
+      "2ac396fd-72e7-a894-bd6a-3b5b9f21aab9",
+      "1c297f4e-e500-7b7e-ba20-7e7ded28e7af",
+      "9c7b388d-ad64-b752-9fc8-04cab422031c",
+      "f3b5d934-d0bc-7a4f-6e57-3c671c24f90c",
+      "92fb77d0-280e-c693-cdcf-bed2a88feb80"
+    ],
+    "ground_truth_names": [
+      "exception_handler", "websocket_route", "swagger_ui_html", "trace",
+      "options", "decorator", "head", "swagger_ui_redirect", "add_api_route",
+      "api_route", "on_event", "__call__", "patch", "setup", "redoc_html",
+      "middleware", "post", "__init__", "openapi", "get", "include_router",
+      "websocket", "put", "add_api_websocket_route", "delete",
+      "build_middleware_stack"
+    ],
+    "cypher": "MATCH (f:Function)-[:METHOD_OF]->(c:Class {name:'FastAPI', repo_id:'fastapi'}) RETURN f.uuid, f.name"
+  },
+  {
+    "id": "methods_apirouter_class",
+    "query": "what methods does APIRouter have?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "e6a6a7d5-37b6-9097-dadb-4c2a73c368fd",
+      "401d3e84-ce38-97ea-4285-a30fcdfd0ace",
+      "051bb6c2-0f65-617c-4f93-0e5cee8cc2de",
+      "619a7019-ea9e-e79d-cd98-32e2910c150c",
+      "ccad008d-277f-5192-6010-ed674a31f083",
+      "d9c55d1b-de50-8167-c05a-703fc16bbc00",
+      "83514916-02f3-0fe1-e2db-a6eb387bc9e4",
+      "5f564ada-8018-9e11-efd0-4878261a802c",
+      "52637fa3-c3fe-3e88-da1d-846c9fa87edb",
+      "abecd2b1-9a6a-e9c4-f7a0-2e4656363caf",
+      "bb587cf5-a8a1-0539-1bfb-f69fb0b837f9",
+      "5a30a5f3-3018-5c85-f58e-088d1c048050",
+      "37617f01-4837-21c5-1e4c-baa21cbae437",
+      "0c7300a3-184c-9274-5407-4cd2ef0a00b9",
+      "ae553e8d-083f-cf43-0b3e-fc43021fc1d6",
+      "7449cdb2-de92-5a8f-3cf8-64e9a2ee41be",
+      "86cdd229-0ed3-5459-20b0-e73cb33048c7",
+      "ee95408b-424e-6550-5570-56ad35a32b1a",
+      "57cad1fb-60cd-1af3-ec7b-c0826175a32e",
+      "72f28cb5-5c37-f361-eb02-5a0ac6626946",
+      "129ee31a-a3ea-5e6b-7b63-14a16de3bb7a"
+    ],
+    "ground_truth_names": [
+      "include_router", "decorator", "add_api_route", "websocket", "trace",
+      "__init__", "route", "add_event_handler", "put", "add_api_websocket_route",
+      "delete", "patch", "api_route", "get", "options", "websocket_route",
+      "head", "_shutdown", "on_event", "_startup", "post"
+    ],
+    "cypher": "MATCH (f:Function)-[:METHOD_OF]->(c:Class {name:'APIRouter', repo_id:'fastapi'}) RETURN f.uuid, f.name"
+  },
+  {
+    "id": "methods_apiroute_class",
+    "query": "what methods does APIRoute have?",
+    "mode": "graph",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "7cef5025-f684-daf7-70e9-1b706e6abe56",
+      "ca13b1bf-634f-d0d4-e21a-50351ba17503",
+      "126998f2-4d9a-a41a-dac0-3a46e43c431d"
+    ],
+    "ground_truth_names": ["get_route_handler", "__init__", "matches"],
+    "cypher": "MATCH (f:Function)-[:METHOD_OF]->(c:Class {name:'APIRoute', repo_id:'fastapi'}) RETURN f.uuid, f.name"
+  }
+]

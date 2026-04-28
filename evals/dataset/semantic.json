@@ -1,0 +1,136 @@
+[
+  {
+    "id": "openapi_schema_generation",
+    "query": "how does FastAPI generate the OpenAPI schema?",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "335a9a2f-2932-f057-2288-edcd2d823e0f",
+      "551eefba-e7dc-7f02-5853-5a748a508871",
+      "aca3e19c-4c95-3efb-b7f8-4efdd3edd33e"
+    ],
+    "ground_truth_names": ["get_openapi", "get_openapi_path", "get_fields_from_routes"],
+    "source_files": ["fastapi/openapi/utils.py"]
+  },
+  {
+    "id": "json_encoding",
+    "query": "find functions that encode Python objects to JSON-safe types",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "96e9214b-aafb-2f09-6cb7-397b26043d29"
+    ],
+    "ground_truth_names": ["jsonable_encoder"],
+    "source_files": ["fastapi/encoders.py"]
+  },
+  {
+    "id": "exception_handling",
+    "query": "how are HTTP exceptions and validation errors handled?",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "e145d6b7-8219-5ed1-5e90-2fe4dca948c7",
+      "b8e55aba-d79f-26c4-f4cd-fe963ae6caa7"
+    ],
+    "ground_truth_names": ["http_exception_handler", "request_validation_exception_handler"],
+    "source_files": ["fastapi/exception_handlers.py"]
+  },
+  {
+    "id": "threadpool_execution",
+    "query": "find functions that run synchronous code in a thread pool",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "ecf0ed3f-c72f-255b-62cf-745ee6249b95",
+      "a4372779-1dc0-30ba-a293-587508f060d6"
+    ],
+    "ground_truth_names": ["run_endpoint_function", "contextmanager_in_threadpool"],
+    "source_files": ["fastapi/routing.py", "fastapi/concurrency.py"]
+  },
+  {
+    "id": "request_body_parsing",
+    "query": "how does FastAPI extract and validate request body parameters?",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "bf223fb9-3932-512b-156f-3bb4ebbaf01c",
+      "21072f30-757c-696f-ef9f-5c3f9d6489e0"
+    ],
+    "ground_truth_names": ["request_body_to_args", "analyze_param"],
+    "source_files": ["fastapi/dependencies/utils.py"]
+  },
+  {
+    "id": "response_serialization",
+    "query": "find functions that serialize response data before sending to the client",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "d4a736d8-89b6-5291-28d2-06c47404c505",
+      "6a468f13-9d44-6ebf-26f0-510a156e359f",
+      "d23370fb-079a-b7ec-7c9e-6f7a03fd4a5a"
+    ],
+    "ground_truth_names": ["serialize_response", "_serialize_item", "_serialize_data"],
+    "source_files": ["fastapi/routing.py"]
+  },
+  {
+    "id": "background_tasks",
+    "query": "how are background tasks scheduled and executed after a response?",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "1fc11a2b-d314-dd3a-e1ed-cc4ac6664b97"
+    ],
+    "ground_truth_names": ["add_task"],
+    "source_files": ["fastapi/background.py"]
+  },
+  {
+    "id": "docs_ui_rendering",
+    "query": "find functions that render the Swagger and ReDoc API documentation pages",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "8c15d9d4-8722-c7e4-5579-19932e07264e",
+      "610d88ac-7ca7-d785-84aa-9673aa25ed18",
+      "adf3a1be-306e-c257-9844-2bd5ed7d3aea"
+    ],
+    "ground_truth_names": ["swagger_ui_html", "redoc_html", "swagger_ui_redirect"],
+    "source_files": ["fastapi/applications.py"]
+  },
+  {
+    "id": "websocket_handling",
+    "query": "how does FastAPI handle WebSocket connections?",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "4512ee86-31ed-c4d5-4ef5-b50380ecb341",
+      "619a7019-ea9e-e79d-cd98-32e2910c150c",
+      "7449cdb2-de92-5a8f-3cf8-64e9a2ee41be"
+    ],
+    "ground_truth_names": ["get_websocket_app", "websocket", "websocket_route"],
+    "source_files": ["fastapi/routing.py"]
+  },
+  {
+    "id": "middleware_processing",
+    "query": "find functions that add and process middleware in the request lifecycle",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "92fb77d0-280e-c693-cdcf-bed2a88feb80",
+      "ad15045c-eafa-f29f-0128-fac9969a13a4"
+    ],
+    "ground_truth_names": ["build_middleware_stack", "middleware"],
+    "source_files": ["fastapi/applications.py"]
+  },
+  {
+    "id": "query_param_parsing",
+    "query": "how are query parameters and path parameters extracted from incoming requests?",
+    "mode": "vector",
+    "repo_id": "fastapi",
+    "ground_truth_uuids": [
+      "9aaa5886-3bfc-a322-bf69-c31957fcead9",
+      "21072f30-757c-696f-ef9f-5c3f9d6489e0"
+    ],
+    "ground_truth_names": ["request_params_to_args", "analyze_param"],
+    "source_files": ["fastapi/dependencies/utils.py"]
+  }
+]
