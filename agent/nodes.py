@@ -43,16 +43,24 @@ def route_query(state: AgentState) -> dict:
 
 import re as _re
 
+_STOPWORDS = {
+    "what", "does", "have", "how", "where", "who", "which", "the", "is",
+    "are", "method", "methods", "call", "calls", "caller", "callers",
+    "callee", "callees", "subclass", "subclasses", "class", "function",
+    "defined", "in", "a", "an", "its", "do",
+}
+
 def _extract_name(query: str) -> str | None:
     """Pull a bare function/class name from a structural query."""
     # match "what calls foo", "callers of foo", "who calls foo", "calls foo?"
     m = _re.search(r'\b(?:calls?|callers?\s+of|callees?\s+of|inherits?\s+from|subclasses?\s+of)\s+[`"\']?(\w+)[`"\']?', query, _re.I)
     if m:
         return m.group(1)
-    # last resort: last word that looks like an identifier
-    tokens = _re.findall(r'[`"\'](\w+)[`"\']|(\b[a-z_]\w+\b)', query)
+    # capture all identifiers (including PascalCase class names), skip stopwords
+    tokens = _re.findall(r'[`"\'](\w+)[`"\']|(\b[A-Za-z_]\w*\b)', query)
     flat = [a or b for a, b in tokens if (a or b)]
-    return flat[-1] if flat else None
+    candidates = [t for t in flat if t.lower() not in _STOPWORDS]
+    return candidates[-1] if candidates else (flat[-1] if flat else None)
 
 
 def make_graph_node(retriever: GraphRetriever) -> Callable:
