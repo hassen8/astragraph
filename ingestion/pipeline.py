@@ -87,6 +87,7 @@ class IngestionPipeline:
         self,
         repo_path: str,
         languages: list[str] | None = None,
+        on_progress: callable | None = None,
     ) -> None:
         """
         Run the two-pass ingestion pipeline.
@@ -190,6 +191,9 @@ class IngestionPipeline:
                 all_functions.extend(functions)
                 all_classes.extend(classes)
                 all_raw_calls.extend(raw_calls)
+
+                if on_progress:
+                    on_progress(i, len(files), rel_path)
 
                 logger.debug(
                     "[%d/%d] %s — cls=%d fn=%d rels=%d",

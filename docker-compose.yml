@@ -33,12 +33,16 @@ services:
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
-      LLM_PROVIDER: openai_compat
+      COLLECTION: ${COLLECTION:-codebase}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai_compat}
       LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
-      OPENAI_COMPAT_URL: https://api.groq.com/openai/v1
-      OPENAI_COMPAT_APIKEY: ${GROQ_API_KEY}
+      OPENAI_COMPAT_URL: ${OPENAI_COMPAT_URL:-https://api.groq.com/openai/v1}
+      OPENAI_COMPAT_APIKEY: ${OPENAI_COMPAT_APIKEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       EMBED_MODEL: ${EMBED_MODEL:-all-MiniLM-L6-v2}
-      COLLECTION: codebase
+      EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-64}
     volumes:
       - workspace:/workspace
     depends_on:
