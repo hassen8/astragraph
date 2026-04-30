@@ -329,6 +329,55 @@ class Neo4jStore:
             "repo_id":   repo_id,
         })
 
+    # ----- reads: full graph for visualisation -------------------------------- #
+
+    def get_full_graph(self, repo_id: str, limit: int = 500) -> dict:
+        """
+        Return all Function nodes + CALLS edges for a repo, capped at `limit`
+        nodes. Nodes are ranked by in-degree (most-called functions first) so
+        the most structurally important ones survive the cap.
+
+        Returns {"nodes": [...], "edges": [...]} ready for Cytoscape.js.
+
+        Each node: { id, label, file_path, line_start, line_end, full_body }
+        Each edge: { id, source, target }
+        """
+        # Fetch the top-N most-called functions first. Functions with no
+        # incoming CALLS edges still appear if they have outgoing ones.
+        node_cypher = """
+            MATCH (f:Function {repo_id: $repo_id})
+            OPTIONAL MATCH (f)<-[:CALLS]-(caller:Function {repo_id: $repo_id})
+            WITH f, count(caller) AS in_degree
+            ORDER BY in_degree DESC
+            LIMIT $limit
+            RETURN f.uuid           AS id,
+                   f.name           AS label,
+                   f.file_path      AS file_path,
+                   f.line_start     AS line_start,
+                   f.line_end       AS line_end,
+                   f.full_body      AS full_body
+        """
+        with self._driver.session() as session:
+            node_rows = list(session.run(node_cypher, {"repo_id": repo_id, "limit": limit}))
+
+        node_ids = {r["id"] for r in node_rows}
+        nodes = [dict(r) for r in node_rows]
+
+        # Only return edges where both endpoints are in the visible node set.
+        # Avoids dangling edges that Cytoscape would complain about.
+        edge_cypher = """
+            MATCH (a:Function {repo_id: $repo_id})-[:CALLS]->(b:Function {repo_id: $repo_id})
+            WHERE a.uuid IN $ids AND b.uuid IN $ids
+            RETURN a.uuid + '->' + b.uuid AS id,
+                   a.uuid AS source,
+                   b.uuid AS target
+        """
+        with self._driver.session() as session:
+            edge_rows = list(session.run(edge_cypher, {"repo_id": repo_id, "ids": list(node_ids)}))
+
+        edges = [dict(r) for r in edge_rows]
+        return {"nodes": nodes, "edges": edges}
+
     # ----- internal --------------------------------------------------------- #
 
     def _run(self, cypher: str, params: dict) -> list[dict]:

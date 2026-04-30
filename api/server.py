@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent.graph import build_graph
@@ -68,6 +69,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AstraGraph", lifespan=lifespan)
+
+_STATIC = Path(__file__).parent.parent / "static"
+if _STATIC.exists():
+    app.mount("/ui", StaticFiles(directory=str(_STATIC), html=True), name="static")
 
 
 class QueryRequest(BaseModel):
@@ -240,6 +245,13 @@ def ingest_status(job_id: str) -> IngestStatus:
     if not job:
         raise HTTPException(status_code=404, detail=f"job_id {job_id!r} not found")
     return IngestStatus(**job)
+
+
+@app.get("/graph/{repo_id}")
+def graph(repo_id: str, req: Request, limit: int = 500) -> dict:
+    """Full repo call graph for visualisation. Returns nodes + edges capped at `limit`."""
+    store: Neo4jStore = req.app.state.graph_store
+    return store.get_full_graph(repo_id, limit=limit)
 
 
 @app.post("/query", response_model=QueryResponse)
