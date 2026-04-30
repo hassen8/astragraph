@@ -13,6 +13,12 @@ services:
       - neo4j_data:/data
     networks:
       - internal
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -21,6 +27,12 @@ services:
       - qdrant_data:/qdrant/storage
     networks:
       - internal
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   api:
     build: .
@@ -43,11 +55,14 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       EMBED_MODEL: ${EMBED_MODEL:-all-MiniLM-L6-v2}
       EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-64}
+      WORKSPACE_DIR: /workspace
     volumes:
       - workspace:/workspace
     depends_on:
-      - neo4j
-      - qdrant
+      neo4j:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
     networks:
       - internal
 
