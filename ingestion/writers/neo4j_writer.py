@@ -107,28 +107,38 @@ class Neo4jWriter:
     # ------------------------------------------------------------------
 
     def write_package(self, package: PackageNode) -> None:
-        """
-        Upsert a single Package node.
-        Called once per file processed — the resolver deduplicates via MERGE.
-        """
+        """Upsert a single Package node."""
+        self.write_packages([package])
+
+    def write_packages(self, packages: list[PackageNode]) -> None:
+        """Batch-upsert Package nodes. One round trip regardless of list size."""
+        if not packages:
+            return
+        rows = [
+            {
+                "uuid":         p.uuid,
+                "name":         p.name,
+                "directory":    p.directory,
+                "is_namespace": p.is_namespace,
+                "has_init":     p.has_init,
+                "init_file":    p.init_file,
+                "repo_id":      p.repo_id,
+            }
+            for p in packages
+        ]
         with self._driver.session() as session:
             session.run(
                 """
-                MERGE (n:Package {uuid: $uuid})
-                SET   n.name         = $name,
-                      n.directory    = $directory,
-                      n.is_namespace = $is_namespace,
-                      n.has_init     = $has_init,
-                      n.init_file    = $init_file,
-                      n.repo_id      = $repo_id
+                UNWIND $rows AS row
+                MERGE (n:Package {uuid: row.uuid})
+                SET   n.name         = row.name,
+                      n.directory    = row.directory,
+                      n.is_namespace = row.is_namespace,
+                      n.has_init     = row.has_init,
+                      n.init_file    = row.init_file,
+                      n.repo_id      = row.repo_id
                 """,
-                uuid=package.uuid,
-                name=package.name,
-                directory=package.directory,
-                is_namespace=package.is_namespace,
-                has_init=package.has_init,
-                init_file=package.init_file,
-                repo_id=package.repo_id,
+                rows=rows,
             )
 
     # ------------------------------------------------------------------
@@ -136,33 +146,42 @@ class Neo4jWriter:
     # ------------------------------------------------------------------
 
     def write_module(self, module: ModuleNode) -> None:
-        """
-        Upsert a single Module node (one per source file).
-        `exported_names` and `imported_modules` are stored as lists —
-        Neo4j natively supports list properties.
-        """
+        """Upsert a single Module node."""
+        self.write_modules([module])
+
+    def write_modules(self, modules: list[ModuleNode]) -> None:
+        """Batch-upsert Module nodes. One round trip regardless of list size."""
+        if not modules:
+            return
+        rows = [
+            {
+                "uuid":             m.uuid,
+                "name":             m.name,
+                "file_path":        m.file_path,
+                "language":         m.language,
+                "docstring":        m.docstring,
+                "exported_names":   m.exported_names,
+                "imported_modules": m.imported_modules,
+                "is_init":          m.is_init,
+                "repo_id":          m.repo_id,
+            }
+            for m in modules
+        ]
         with self._driver.session() as session:
             session.run(
                 """
-                MERGE (n:Module {uuid: $uuid})
-                SET   n.name             = $name,
-                      n.file_path        = $file_path,
-                      n.language         = $language,
-                      n.docstring        = $docstring,
-                      n.exported_names   = $exported_names,
-                      n.imported_modules = $imported_modules,
-                      n.is_init          = $is_init,
-                      n.repo_id          = $repo_id
+                UNWIND $rows AS row
+                MERGE (n:Module {uuid: row.uuid})
+                SET   n.name             = row.name,
+                      n.file_path        = row.file_path,
+                      n.language         = row.language,
+                      n.docstring        = row.docstring,
+                      n.exported_names   = row.exported_names,
+                      n.imported_modules = row.imported_modules,
+                      n.is_init          = row.is_init,
+                      n.repo_id          = row.repo_id
                 """,
-                uuid=module.uuid,
-                name=module.name,
-                file_path=module.file_path,
-                language=module.language,
-                docstring=module.docstring,
-                exported_names=module.exported_names,
-                imported_modules=module.imported_modules,
-                is_init=module.is_init,
-                repo_id=module.repo_id,
+                rows=rows,
             )
 
     # ------------------------------------------------------------------

@@ -120,12 +120,19 @@ class IngestionPipeline:
                 package_registry=package_registry,
             )
 
-            all_functions: list[FunctionNode] = []
-            all_classes:  list[ClassNode]    = []
-            all_raw_calls: list[dict]        = []
+            all_functions:  list[FunctionNode] = []
+            all_classes:    list[ClassNode]    = []
+            all_raw_calls:  list[dict]         = []
+
+            # Accumulators for bulk writes after the parse loop
+            all_packages:   list[PackageNode]  = []
+            all_modules:    list[ModuleNode]   = []
+            all_attributes: list              = []
+            all_parameters: list              = []
+            all_pass1_rels: list[Relationship] = []
 
             # ------------------------------------------------------------------
-            # Pass 1 — extract, write entities, resolve + write relationships
+            # Pass 1 — extract entities and resolve relationships
             # ------------------------------------------------------------------
             logger.info("Pass 1: extracting entities from %s", repo_path)
 
@@ -168,15 +175,16 @@ class IngestionPipeline:
                     logger.warning("Extraction failed for %s: %s", rel_path, exc)
                     continue
 
-                # Write entities — nodes must exist before relationships can reference them
-                graph_store.write_package(package)
-                graph_store.write_module(module)
-                graph_store.write_classes(classes)
-                graph_store.write_functions(functions)
-                graph_store.write_attributes(attributes)
-                graph_store.write_parameters(parameters)
+                # Accumulate entities
+                all_packages.append(package)
+                all_modules.append(module)
+                all_functions.extend(functions)
+                all_classes.extend(classes)
+                all_attributes.extend(attributes)
+                all_parameters.extend(parameters)
+                all_raw_calls.extend(raw_calls)
 
-                # Resolve and write structural relationships for this file
+                # Resolve structural relationships
                 pass1_rels = resolver.resolve_pass1(
                     module=module,
                     package=package,
@@ -185,12 +193,7 @@ class IngestionPipeline:
                     attributes=attributes,
                     parameters=parameters,
                 )
-                graph_store.write_external_dependencies(pass1_rels)
-                graph_store.write_relationships(pass1_rels)
-
-                all_functions.extend(functions)
-                all_classes.extend(classes)
-                all_raw_calls.extend(raw_calls)
+                all_pass1_rels.extend(pass1_rels)
 
                 if on_progress:
                     on_progress(i, len(files), rel_path)
@@ -199,6 +202,23 @@ class IngestionPipeline:
                     "[%d/%d] %s — cls=%d fn=%d rels=%d",
                     i, len(files), rel_path, len(classes), len(functions), len(pass1_rels),
                 )
+
+            # ------------------------------------------------------------------
+            # Bulk write — all entities in one round trip per type
+            # ------------------------------------------------------------------
+            logger.info(
+                "Pass 1 write: %d packages, %d modules, %d classes, %d functions, %d rels",
+                len(all_packages), len(all_modules), len(all_classes),
+                len(all_functions), len(all_pass1_rels),
+            )
+            graph_store.write_packages(all_packages)
+            graph_store.write_modules(all_modules)
+            graph_store.write_classes(all_classes)
+            graph_store.write_functions(all_functions)
+            graph_store.write_attributes(all_attributes)
+            graph_store.write_parameters(all_parameters)
+            graph_store.write_external_dependencies(all_pass1_rels)
+            graph_store.write_relationships(all_pass1_rels)
 
             # ------------------------------------------------------------------
             # Pass 2 — resolve CALLS across the whole repo and write

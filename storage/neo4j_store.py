@@ -150,8 +150,14 @@ class Neo4jStore:
     def write_package(self, pkg: PackageNode) -> None:
         self._entity_writer.write_package(pkg)
 
+    def write_packages(self, pkgs: list[PackageNode]) -> None:
+        self._entity_writer.write_packages(pkgs)
+
     def write_module(self, module: ModuleNode) -> None:
         self._entity_writer.write_module(module)
+
+    def write_modules(self, modules: list[ModuleNode]) -> None:
+        self._entity_writer.write_modules(modules)
 
     def write_classes(self, classes: list[ClassNode]) -> None:
         self._entity_writer.write_classes(classes)
