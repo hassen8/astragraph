@@ -172,6 +172,7 @@ class IngestStatus(BaseModel):
     status:   str
     repo_id:  str
     progress: str
+    phase:    str = ""
     error:    str | None = None
 
 
@@ -190,15 +191,18 @@ def _ingest_worker(job_id: str, github_url: str, repo_id: str, cfg: Config) -> N
             check=True, capture_output=True, text=True,
         )
 
-        _set(status="ingesting", progress="0/? files")
+        _set(status="ingesting", progress="0/? files", phase="parsing")
         repo_node = make_repo_node(str(clone_path), repo_id, github_url)
         pipeline  = IngestionPipeline(repo=repo_node, cfg=cfg)
 
         def on_progress(done: int, total: int, _path: str) -> None:
             _set(progress=f"{done}/{total} files")
 
-        pipeline.run(str(clone_path), languages=["python"], on_progress=on_progress)
-        _set(status="done", progress="complete")
+        def on_phase(phase: str) -> None:
+            _set(phase=phase)
+
+        pipeline.run(str(clone_path), languages=["python"], on_progress=on_progress, on_phase=on_phase)
+        _set(status="done", progress="complete", phase="done")
 
     except subprocess.CalledProcessError as exc:
         _set(status="failed", error=f"git clone failed: {exc.stderr.strip()}")
@@ -230,7 +234,7 @@ def ingest(request: IngestRequest, req: Request) -> IngestResponse:
 
     job_id = str(uuid.uuid4())[:8]
     with _jobs_lock:
-        _jobs[job_id] = {"job_id": job_id, "status": "pending", "repo_id": repo_id, "progress": "", "error": None}
+        _jobs[job_id] = {"job_id": job_id, "status": "pending", "repo_id": repo_id, "progress": "", "phase": "", "error": None}
 
     cfg = req.app.state.cfg
     threading.Thread(target=_ingest_worker, args=(job_id, request.github_url, repo_id, cfg), daemon=True).start()
@@ -248,10 +252,16 @@ def ingest_status(job_id: str) -> IngestStatus:
 
 
 @app.get("/graph/{repo_id}")
-def graph(repo_id: str, req: Request, limit: int = 500) -> dict:
-    """Full repo call graph for visualisation. Returns nodes + edges capped at `limit`."""
+def graph(repo_id: str, req: Request, limit: int = 75, types: str = "function") -> dict:
+    """Repo graph for visualisation.
+
+    Args:
+        limit: max nodes returned (per type when multiple types are requested).
+        types: comma-separated subset of {function, class, module, package}.
+    """
     store: Neo4jStore = req.app.state.graph_store
-    return store.get_full_graph(repo_id, limit=limit)
+    type_list = [t.strip() for t in types.split(",") if t.strip()]
+    return store.get_full_graph(repo_id, limit=limit, types=type_list)
 
 
 @app.post("/query", response_model=QueryResponse)

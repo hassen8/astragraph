@@ -337,51 +337,112 @@ class Neo4jStore:
 
     # ----- reads: full graph for visualisation -------------------------------- #
 
-    def get_full_graph(self, repo_id: str, limit: int = 500) -> dict:
+    def get_full_graph(
+        self,
+        repo_id: str,
+        limit: int = 75,
+        types: list[str] | None = None,
+    ) -> dict:
         """
-        Return all Function nodes + CALLS edges for a repo, capped at `limit`
-        nodes. Nodes are ranked by in-degree (most-called functions first) so
-        the most structurally important ones survive the cap.
+        Return nodes + edges for visualisation, capped at `limit` nodes per type.
+        Nodes are ranked by structural importance: in-degree for functions,
+        inheritance + method count for classes, import-count for modules,
+        contained-children for packages.
 
-        Returns {"nodes": [...], "edges": [...]} ready for Cytoscape.js.
+        types defaults to ["function"]. Supported: function, class, module, package.
 
-        Each node: { id, label, file_path, line_start, line_end, full_body }
-        Each edge: { id, source, target }
+        Each node: { id, label, type, file_path, line_start, line_end,
+                     full_body, in_degree, out_degree }
+        Each edge: { id, source, target, rel_type }
         """
-        # Fetch the top-N most-called functions first. Functions with no
-        # incoming CALLS edges still appear if they have outgoing ones.
-        node_cypher = """
-            MATCH (f:Function {repo_id: $repo_id})
-            OPTIONAL MATCH (f)<-[:CALLS]-(caller:Function {repo_id: $repo_id})
-            WITH f, count(caller) AS in_degree
-            ORDER BY in_degree DESC
-            LIMIT $limit
-            RETURN f.uuid           AS id,
-                   f.name           AS label,
-                   f.file_path      AS file_path,
-                   f.line_start     AS line_start,
-                   f.line_end       AS line_end,
-                   f.full_body      AS full_body
-        """
+        types = [t.lower() for t in (types or ["function"])]
+        per_type = max(8, limit // max(1, len(types)))
+
+        nodes: list[dict] = []
+
         with self._driver.session() as session:
-            node_rows = list(session.run(node_cypher, {"repo_id": repo_id, "limit": limit}))
+            if "function" in types:
+                rows = session.run("""
+                    MATCH (f:Function {repo_id: $repo_id})
+                    OPTIONAL MATCH (f)<-[:CALLS]-(caller:Function {repo_id: $repo_id})
+                    WITH f, count(caller) AS deg
+                    ORDER BY deg DESC LIMIT $limit
+                    RETURN f.uuid AS id, f.name AS label, 'function' AS type,
+                           f.file_path AS file_path,
+                           coalesce(f.line_start, 0) AS line_start,
+                           coalesce(f.line_end,   0) AS line_end,
+                           f.full_body AS full_body
+                """, {"repo_id": repo_id, "limit": per_type})
+                nodes.extend(dict(r) for r in rows)
 
-        node_ids = {r["id"] for r in node_rows}
-        nodes = [dict(r) for r in node_rows]
+            if "class" in types:
+                rows = session.run("""
+                    MATCH (c:Class {repo_id: $repo_id})
+                    OPTIONAL MATCH (c)<-[:INHERITS]-(sub:Class {repo_id: $repo_id})
+                    OPTIONAL MATCH (m:Function {repo_id: $repo_id})-[:METHOD_OF]->(c)
+                    WITH c, count(DISTINCT sub) + count(DISTINCT m) AS deg
+                    ORDER BY deg DESC LIMIT $limit
+                    RETURN c.uuid AS id, c.name AS label, 'class' AS type,
+                           c.file_path AS file_path,
+                           coalesce(c.line_start, 0) AS line_start,
+                           coalesce(c.line_end,   0) AS line_end,
+                           coalesce(c.docstring,  '') AS full_body
+                """, {"repo_id": repo_id, "limit": per_type})
+                nodes.extend(dict(r) for r in rows)
 
-        # Only return edges where both endpoints are in the visible node set.
-        # Avoids dangling edges that Cytoscape would complain about.
-        edge_cypher = """
-            MATCH (a:Function {repo_id: $repo_id})-[:CALLS]->(b:Function {repo_id: $repo_id})
-            WHERE a.uuid IN $ids AND b.uuid IN $ids
-            RETURN a.uuid + '->' + b.uuid AS id,
-                   a.uuid AS source,
-                   b.uuid AS target
-        """
+            if "module" in types:
+                rows = session.run("""
+                    MATCH (m:Module {repo_id: $repo_id})
+                    OPTIONAL MATCH (m)<-[:IMPORTS]-(other:Module {repo_id: $repo_id})
+                    WITH m, count(other) AS deg
+                    ORDER BY deg DESC LIMIT $limit
+                    RETURN m.uuid AS id, coalesce(m.name, m.file_path) AS label, 'module' AS type,
+                           m.file_path AS file_path,
+                           0 AS line_start, 0 AS line_end,
+                           coalesce(m.docstring, '') AS full_body
+                """, {"repo_id": repo_id, "limit": per_type})
+                nodes.extend(dict(r) for r in rows)
+
+            if "package" in types:
+                rows = session.run("""
+                    MATCH (p:Package {repo_id: $repo_id})
+                    OPTIONAL MATCH (p)-[:CONTAINS]->(child)
+                    WITH p, count(child) AS deg
+                    ORDER BY deg DESC LIMIT $limit
+                    RETURN p.uuid AS id, coalesce(p.name, p.directory, '?') AS label, 'package' AS type,
+                           coalesce(p.directory, '') AS file_path,
+                           0 AS line_start, 0 AS line_end,
+                           '' AS full_body
+                """, {"repo_id": repo_id, "limit": per_type})
+                nodes.extend(dict(r) for r in rows)
+
+        node_ids = [n["id"] for n in nodes]
+        if not node_ids:
+            return {"nodes": [], "edges": []}
+
         with self._driver.session() as session:
-            edge_rows = list(session.run(edge_cypher, {"repo_id": repo_id, "ids": list(node_ids)}))
+            edge_rows = session.run("""
+                MATCH (a {repo_id: $repo_id})-[r]->(b {repo_id: $repo_id})
+                WHERE a.uuid IN $ids AND b.uuid IN $ids
+                  AND type(r) IN ['CALLS', 'INHERITS', 'IMPORTS', 'METHOD_OF',
+                                  'CONTAINS', 'PART_OF', 'DEFINED_IN']
+                RETURN a.uuid + '->' + b.uuid + ':' + type(r) AS id,
+                       a.uuid AS source, b.uuid AS target,
+                       type(r) AS rel_type
+            """, {"repo_id": repo_id, "ids": node_ids})
+            edges = [dict(r) for r in edge_rows]
 
-        edges = [dict(r) for r in edge_rows]
+        # Compute in/out degree from the visible edge set so the frontend
+        # can size nodes by their on-screen importance.
+        in_deg: dict[str, int]  = {}
+        out_deg: dict[str, int] = {}
+        for e in edges:
+            in_deg[e["target"]]  = in_deg.get(e["target"], 0)  + 1
+            out_deg[e["source"]] = out_deg.get(e["source"], 0) + 1
+        for n in nodes:
+            n["in_degree"]  = in_deg.get(n["id"],  0)
+            n["out_degree"] = out_deg.get(n["id"], 0)
+
         return {"nodes": nodes, "edges": edges}
 
     # ----- internal --------------------------------------------------------- #

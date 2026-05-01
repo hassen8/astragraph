@@ -16,7 +16,7 @@ class Config:
     # Embeddings
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     embed_model:    str = os.getenv("EMBED_MODEL",    "all-MiniLM-L6-v2")
-    embed_batch_size: int = int(os.getenv("EMBED_BATCH_SIZE", "64"))
+    embed_batch_size: int = int(os.getenv("EMBED_BATCH_SIZE", "512"))
 
     # LLM / agent
     anthropic_api_key:    str = os.getenv("ANTHROPIC_API_KEY",    "")

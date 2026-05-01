@@ -88,25 +88,31 @@ class IngestionPipeline:
         repo_path: str,
         languages: list[str] | None = None,
         on_progress: callable | None = None,
+        on_phase: callable | None = None,
     ) -> None:
         """
         Run the two-pass ingestion pipeline.
 
         Pass 1 writes entities and structural relationships file-by-file.
         Pass 2 resolves and writes CALLS relationships repo-wide.
+
+        on_phase(phase: str) is called at each major phase boundary.
+        Phases: parsing, writing_entities, writing_relationships,
+                resolving_calls, embedding, writing_vectors
         """
         repo_id = self.repo.repo_id
-        cfg     = self.cfg
+        cfg     = self.cfg 
+
+        def _phase(name: str) -> None:
+            if on_phase:
+                on_phase(name)
+
 
         with Neo4jStore(cfg) as graph_store:
 
-            # Schema init is idempotent — safe to call every run.
-            # Creates uniqueness constraints, range indexes, and the fulltext index.
             graph_store.init_schema()
-
-            # Write the repository root node first — top-level packages need
-            # a destination for their PART_OF edges.
             graph_store.write_repository(self.repo)
+            
 
             # Shared registries accumulate across files for cross-file resolution
             module_registry:  dict[str, ModuleNode]  = {}
@@ -134,6 +140,7 @@ class IngestionPipeline:
             # ------------------------------------------------------------------
             # Pass 1 — extract entities and resolve relationships
             # ------------------------------------------------------------------
+            _phase("parsing")
             logger.info("Pass 1: extracting entities from %s", repo_path)
 
             parsers: dict[str, Parser] = {}
@@ -203,26 +210,32 @@ class IngestionPipeline:
                     i, len(files), rel_path, len(classes), len(functions), len(pass1_rels),
                 )
 
+            
+
             # ------------------------------------------------------------------
             # Bulk write — all entities in one round trip per type
             # ------------------------------------------------------------------
+            _phase("writing_entities")
             logger.info(
-                "Pass 1 write: %d packages, %d modules, %d classes, %d functions, %d rels",
-                len(all_packages), len(all_modules), len(all_classes),
-                len(all_functions), len(all_pass1_rels),
+                "Pass 1 write: %d packages, %d modules, %d classes, %d functions, "
+                "%d attributes, %d parameters, %d rels",
+                len(all_packages), len(all_modules), len(all_classes), len(all_functions),
+                len(all_attributes), len(all_parameters), len(all_pass1_rels),
             )
-            graph_store.write_packages(all_packages)
-            graph_store.write_modules(all_modules)
-            graph_store.write_classes(all_classes)
-            graph_store.write_functions(all_functions)
-            graph_store.write_attributes(all_attributes)
-            graph_store.write_parameters(all_parameters)
-            graph_store.write_external_dependencies(all_pass1_rels)
-            graph_store.write_relationships(all_pass1_rels)
+            graph_store.write_packages(all_packages)   
+            graph_store.write_modules(all_modules)     
+            graph_store.write_classes(all_classes)     
+            graph_store.write_functions(all_functions) 
+            graph_store.write_attributes(all_attributes) 
+            graph_store.write_parameters(all_parameters) 
+            _phase("writing_relationships")
+            graph_store.write_external_dependencies(all_pass1_rels) 
+            graph_store.write_relationships(all_pass1_rels) 
 
             # ------------------------------------------------------------------
             # Pass 2 — resolve CALLS across the whole repo and write
             # ------------------------------------------------------------------
+            _phase("resolving_calls")
             logger.info("Pass 2: resolving %d call sites", len(all_raw_calls))
 
             repo_fn_lookup = build_repo_fn_lookup(all_functions)
@@ -237,16 +250,19 @@ class IngestionPipeline:
                         "call_site_line": c["call_site_line"],
                         "is_conditional": c["is_conditional"],
                     },
+                    src_label="Function",
                 )
                 for c in all_raw_calls
             ]
 
             pass2_rels = resolver.resolve_calls(raw_call_rels, repo_fn_lookup)
             graph_store.write_relationships(pass2_rels)
+            
 
             # ------------------------------------------------------------------
             # Embedding — filter, build docs, embed, write to vector store
             # ------------------------------------------------------------------
+            _phase("embedding")
             fn_docs  = [make_function_embed_doc(fn)  for fn in all_functions if should_embed(fn)]
             cls_docs = [make_class_embed_doc(cls)    for cls in all_classes  if should_embed_class(cls)]
             docs     = fn_docs + cls_docs
@@ -259,7 +275,10 @@ class IngestionPipeline:
 
             with Embedder(self.cfg) as embedder, QdrantStore(self.cfg) as vector_store:
                 embeddings = embedder.embed(docs)
+                
+                _phase("writing_vectors")
                 vector_store.upsert(docs, embeddings)
+                
 
             logger.info(
                 "Done — calls=%d  unresolved=%d  vectors=%d",
