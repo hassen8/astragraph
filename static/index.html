@@ -12,6 +12,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.29.2/cytoscape.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlightjs-line-numbers.js/2.8.0/highlightjs-line-numbers.min.js"></script>
   <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
 
   <style>
@@ -1012,40 +1013,66 @@
       padding: 14px 0;
       font-family: var(--mono);
       font-size: 12px;
-      line-height: 1.4;
+      line-height: 1.55;
       background: transparent;
-      white-space: pre-wrap;
-      word-break: break-word;
+      white-space: pre;
     }
-    .file-body .ln {
-      display: inline-block;
-      width: 3.5ch;
+    /* highlightjs-line-numbers.js table layout */
+    .hljs-ln { border-collapse: collapse; width: 100%; }
+    .hljs-ln td { padding: 0; vertical-align: top; }
+    .hljs-ln-n {
+      width: 1%;
+      white-space: nowrap;
+      padding: 0 14px 0 14px;
       text-align: right;
-      padding-right: 14px;
-      margin-right: 14px;
       color: var(--paper-faint);
-      opacity: 0.5;
+      opacity: 0.45;
       border-right: 1px solid var(--rule);
       user-select: none;
+    }
+    .hljs-ln-code { padding-left: 14px; padding-right: 18px; }
+    /* info card for non-function nodes */
+    .info-card {
+      padding: 24px 28px;
+      font-family: var(--sans);
+    }
+    .info-card .ic-type {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      color: var(--brass);
+      margin-bottom: 6px;
+    }
+    .info-card .ic-name {
+      font-family: var(--serif);
+      font-size: 20px;
+      font-weight: 400;
+      color: var(--paper);
+      margin-bottom: 4px;
+    }
+    .info-card .ic-path {
       font-family: var(--mono);
-      flex-shrink: 0;
+      font-size: 11px;
+      color: var(--paper-faint);
+      margin-bottom: 2px;
     }
-    .file-body .file-line {
-      display: flex;
-      padding-right: 18px;
-      align-items: flex-start;
+    .info-card .ic-lines {
+      font-size: 11px;
+      color: var(--paper-faint);
+      margin-bottom: 16px;
     }
-    .file-body .file-line .code-text {
-      flex: 1;
-      min-width: 0;
+    .info-card .ic-divider {
+      height: 1px;
+      background: var(--rule);
+      margin: 16px 0;
+    }
+    .info-card .ic-doc {
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--paper-faint);
       white-space: pre-wrap;
-      word-break: break-word;
     }
-    .file-body .file-line.hi {
-      background: linear-gradient(90deg, color-mix(in srgb, var(--brass) 12%, transparent), transparent 80%);
-      border-left: 2px solid var(--brass);
-      margin-left: -2px;
-    }
+    .info-card .ic-empty { font-style: italic; opacity: 0.5; }
 
     /* ─────────────────────────────────────────────────────────────────
        MODAL
@@ -1242,6 +1269,9 @@
     <select id="repo-select" onchange="onRepoChange(this.value)">
       <option value="">—</option>
     </select>
+    <button class="icon-btn" id="repo-delete-btn" onclick="confirmDeleteRepo()" title="Delete this repo" style="display:none; color: var(--coral);">
+      <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+    </button>
   </div>
 
   <div class="stat-chip idle" id="stat-chip">
@@ -1267,7 +1297,7 @@
 
     <div class="messages" id="messages">
       <div class="empty-state">
-        <h2>Read your code, <em>literally</em>.</h2>
+        <h2>Read your code,  <em>graphically</em>.</h2>
         <div class="lede">
           AstraGraph parses a codebase into a graph and a vector index, then answers
           questions across both — combining structure with meaning.
@@ -1627,8 +1657,8 @@ function initCytoscape() {
   cy.on("mousemove", "node", (evt) => positionNodeCard(evt.renderedPosition))
 
   cy.on("tap", "node", (evt) => {
-    const item = nodeToProvenance(evt.target)
-    if (item && item.full_body) openFileDrawer(item)
+    const node = evt.target
+    openNodeDrawer(nodeToProvenance(node), node.data("type"))
   })
   cy.on("tap", (evt) => {
     if (evt.target === cy) {
@@ -1811,7 +1841,7 @@ function filterGraph(q) {
   })
 }
 
-// Isolate a node — show only it + its 1-hop neighbors and the edges between them.
+// Isolate a node in the current graph (node must already be present).
 function isolateNode(uuid) {
   if (!cy) return
   const node = cy.$(`#${CSS.escape(uuid)}`)
@@ -1822,13 +1852,74 @@ function isolateNode(uuid) {
   const hidden  = cy.elements().not(visible)
 
   cy.batch(() => {
+    cy.elements().removeClass("dimmed highlighted")
     hidden.addClass("hidden")
-    visible.removeClass("hidden dimmed")
+    visible.removeClass("hidden")
     node.addClass("highlighted")
     visible.edges().addClass("highlighted")
   })
 
   cy.animate({ fit: { eles: visible, padding: 90 }, duration: 600, easing: "ease-in-out-cubic" })
+}
+
+// Isolate a node — if it's not in the current graph, fetch its neighborhood from the server.
+async function isolateNodeOrFetch(uuid) {
+  if (!cy || !currentRepoId) return
+  const node = cy.$(`#${CSS.escape(uuid)}`)
+
+  if (node.length > 0) {
+    isolateNode(uuid)
+    return
+  }
+
+  // Node not in current graph — load its neighborhood
+  try {
+    setOverlay("graph-loading", "Loading node neighborhood…")
+    const res = await fetch(`/graph/${currentRepoId}/node/${encodeURIComponent(uuid)}`)
+    if (!res.ok) throw new Error(`Node not found (${res.status})`)
+    const data = await res.json()
+
+    cy.elements().remove()
+    _isolated = true
+
+    const elements = []
+    for (const n of data.nodes) {
+      const tc   = TYPE_COLOR[n.type] || TYPE_COLOR.function
+      const din  = n.in_degree  || 0
+      const dout = n.out_degree || 0
+      const size = Math.max(11, Math.min(36, 11 + Math.sqrt(din) * 5))
+      elements.push({
+        group: "nodes",
+        data: {
+          id: n.id, label: n.label, type: n.type,
+          fill: tc.fill, stroke: tc.stroke, hilite: tc.fill,
+          size: size, in: din, out: dout,
+          file_path: n.file_path, line_start: n.line_start,
+          line_end: n.line_end, full_body: n.full_body, name: n.label,
+        }
+      })
+    }
+    for (const e of data.edges) {
+      elements.push({ group: "edges", data: { id: e.id, source: e.source, target: e.target, rel: e.rel_type } })
+    }
+    cy.add(elements)
+
+    const center = cy.$(`#${CSS.escape(uuid)}`)
+    if (center.length > 0) {
+      center.addClass("highlighted")
+      center.data("hilite", nodeColorMap[uuid] || "#d4a574")
+      center.connectedEdges().addClass("highlighted")
+    }
+
+    runLayout("cose")
+    setOverlay(null)
+    document.getElementById("graph-stats").style.display = "flex"
+    document.getElementById("stat-nodes").textContent = data.nodes.length
+    document.getElementById("stat-edges").textContent = data.edges.length
+    document.getElementById("stat-shown").textContent = "neighborhood view"
+  } catch (err) {
+    setOverlay("graph-error", err.message || "Failed to load node")
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1865,11 +1956,7 @@ function hideNodeCard() { if (_cardEl) _cardEl.classList.remove("show") }
 async function sendQuery() {
   const input = document.getElementById("query-input")
   const query = input.value.trim()
-  if (!query || busy) return
-  if (!currentRepoId) {
-    appendMessage("error", "Select a repo first.")
-    return
-  }
+  if (!query || busy || !currentRepoId) return
 
   busy = true
   document.getElementById("send-btn").disabled = true
@@ -1916,7 +2003,7 @@ async function sendQuery() {
   }
 
   busy = false
-  document.getElementById("send-btn").disabled = false
+  updateChatEnabled()
 }
 
 function askSample(text) {
@@ -1962,29 +2049,52 @@ function nodeToProvenance(node) {
   }
 }
 
-function openFileDrawer(item) {
+function getLang(filePath) {
+  if (!filePath) return "python"
+  if (filePath.endsWith(".ts") || filePath.endsWith(".tsx")) return "typescript"
+  if (filePath.endsWith(".go"))  return "go"
+  if (filePath.endsWith(".js"))  return "javascript"
+  return "python"
+}
+
+function openNodeDrawer(item, nodeType) {
   if (!item) return
-  const body = item.full_body || "// source not available"
   document.getElementById("fh-name").textContent  = item.name || ""
   document.getElementById("fh-path").textContent  = item.file_path || ""
   document.getElementById("fh-lines").textContent =
-    (item.line_start && item.line_end) ? `${item.line_start}–${item.line_end}` : ""
+    (item.line_start && item.line_end && item.line_start > 0) ? `${item.line_start}–${item.line_end}` : ""
 
-  const lang = (item.file_path || "").endsWith(".py") ? "python"
-             : (item.file_path || "").endsWith(".ts") ? "typescript"
-             : (item.file_path || "").endsWith(".go") ? "go"
-             : "python"
-  const hi = hljs.highlight(body, { language: lang, ignoreIllegals: true }).value
-  const ls = item.line_start || 1
+  const container = document.getElementById("file-body")
+  const type = nodeType || item.type || "function"
+  const body = item.full_body
 
-  const lines = hi.split("\n").map((line, i) => {
-    const num = ls + i
-    const cls = i === 0 ? "file-line hi" : "file-line"
-    return `<span class="${cls}"><span class="ln">${num}</span><span class="code-text">${line || " "}</span></span>`
-  }).join("\n")
-
-  document.getElementById("file-body").innerHTML =
-    `<pre><code class="hljs language-${lang}">${lines}</code></pre>`
+  if (body && type === "function") {
+    const lang = getLang(item.file_path)
+    const pre  = document.createElement("pre")
+    const code = document.createElement("code")
+    code.className   = `hljs language-${lang}`
+    code.textContent = body
+    pre.appendChild(code)
+    container.innerHTML = ""
+    container.appendChild(pre)
+    hljs.highlightElement(code)
+    if (typeof hljs.lineNumbersBlock === "function") {
+      hljs.lineNumbersBlock(code, { startFrom: item.line_start || 1 })
+    }
+  } else {
+    const docstring = body || item.docstring || ""
+    container.innerHTML = `
+      <div class="info-card">
+        <div class="ic-type">${escHtml(type.toUpperCase())}</div>
+        <div class="ic-name">${escHtml(item.name || "")}</div>
+        ${item.file_path ? `<div class="ic-path">${escHtml(item.file_path)}</div>` : ""}
+        ${item.line_start > 0 ? `<div class="ic-lines">Lines ${item.line_start}–${item.line_end}</div>` : ""}
+        <div class="ic-divider"></div>
+        ${docstring
+          ? `<div class="ic-doc">${escHtml(docstring)}</div>`
+          : `<div class="ic-doc ic-empty">No documentation available.</div>`}
+      </div>`
+  }
 
   document.getElementById("file-drawer").classList.add("open")
 }
@@ -2042,8 +2152,7 @@ function appendAnswer(answer, provenance) {
       badge.style.borderColor     = hexA(color, 0.55)
       badge.style.color           = color
       badge.title = `${item.file_path || ""}${item.line_start ? "  " + item.line_start + "–" + item.line_end : ""}\n\nClick to isolate in graph`
-      // clicking a source badge isolates the node in the graph (its 1-hop neighborhood)
-      badge.onclick = () => isolateNode(item.uuid)
+      badge.onclick = () => isolateNodeOrFetch(item.uuid)
       prov.appendChild(badge)
     })
     bubble.appendChild(prov)
@@ -2083,31 +2192,90 @@ function hexA(hex, a) {
 // Repo selector
 // ─────────────────────────────────────────────────────────────────────
 async function onRepoChange(repoId) {
-  if (!repoId) return
   currentRepoId = repoId
+  if (repoId) localStorage.setItem("lastRepo", repoId)
+  else        localStorage.removeItem("lastRepo")
+  const deleteBtn = document.getElementById("repo-delete-btn")
+  deleteBtn.style.display = repoId ? "inline-flex" : "none"
+  updateChatEnabled()
+  if (!repoId) return
   closeFileDrawer()
   resetGraph()
   await loadGraph(repoId)
 }
 
-const _knownRepos = JSON.parse(localStorage.getItem("knownRepos") || "[]")
-function refreshRepoSelect() {
-  const sel = document.getElementById("repo-select")
-  sel.innerHTML = '<option value="">—</option>'
-  _knownRepos.forEach(r => {
-    const opt = document.createElement("option")
-    opt.value = r; opt.textContent = r
-    sel.appendChild(opt)
-  })
+async function loadRepoList() {
+  try {
+    const res = await fetch("/repos")
+    if (!res.ok) return
+    const data = await res.json()
+    const sel  = document.getElementById("repo-select")
+    const prev = sel.value
+    sel.innerHTML = '<option value="">—</option>'
+    for (const r of (data.repos || [])) {
+      const id = r.repo_id || r.name
+      if (!id) continue
+      const opt = document.createElement("option")
+      opt.value = id; opt.textContent = id
+      sel.appendChild(opt)
+    }
+    // Restore previously selected value if still present
+    if (prev && sel.querySelector(`option[value="${prev}"]`)) sel.value = prev
+  } catch (e) { /* server not ready, skip */ }
 }
+
 function addKnownRepo(repoId) {
-  if (!_knownRepos.includes(repoId)) {
-    _knownRepos.push(repoId)
-    localStorage.setItem("knownRepos", JSON.stringify(_knownRepos))
-    refreshRepoSelect()
+  // Add the option synchronously so pollIngest's setTimeout can select it immediately
+  const sel = document.getElementById("repo-select")
+  if (!sel.querySelector(`option[value="${repoId}"]`)) {
+    const opt = document.createElement("option")
+    opt.value = repoId; opt.textContent = repoId
+    sel.appendChild(opt)
+  }
+  // Refresh the full list from server in the background
+  loadRepoList()
+}
+
+async function confirmDeleteRepo() {
+  if (!currentRepoId) return
+  if (!confirm(`Delete repo "${currentRepoId}" from Neo4j and Qdrant?\nThis cannot be undone.`)) return
+  try {
+    const res = await fetch(`/repos/${encodeURIComponent(currentRepoId)}`, { method: "DELETE" })
+    if (!res.ok) throw new Error(`Server returned ${res.status}`)
+    const sel = document.getElementById("repo-select")
+    sel.value = ""
+    currentRepoId = null
+    document.getElementById("repo-delete-btn").style.display = "none"
+    updateChatEnabled()
+    resetGraph()
+    cy && cy.elements().remove()
+    setOverlay("graph-empty")
+    await loadRepoList()
+  } catch (e) {
+    alert(`Delete failed: ${e.message}`)
   }
 }
-refreshRepoSelect()
+
+function updateChatEnabled() {
+  const enabled = !!currentRepoId
+  const input = document.getElementById("query-input")
+  const btn   = document.getElementById("send-btn")
+  input.disabled    = !enabled
+  input.placeholder = enabled ? "Ask anything about the code…" : "Select or ingest a repo first…"
+  if (!busy) btn.disabled = !enabled
+  document.querySelectorAll(".sample").forEach(s => { s.disabled = !enabled; s.style.opacity = enabled ? "" : "0.4" })
+}
+
+// On page load: populate list then restore the last used repo
+loadRepoList().then(() => {
+  const saved = localStorage.getItem("lastRepo")
+  const sel   = document.getElementById("repo-select")
+  if (saved && sel.querySelector(`option[value="${saved}"]`)) {
+    sel.value = saved
+    onRepoChange(saved)
+  }
+})
+updateChatEnabled()
 
 // ─────────────────────────────────────────────────────────────────────
 // Ingest modal

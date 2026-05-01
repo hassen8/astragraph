@@ -445,6 +445,84 @@ class Neo4jStore:
 
         return {"nodes": nodes, "edges": edges}
 
+    def get_node_neighborhood(self, uuid: str, repo_id: str) -> dict:
+        """Return a node and its 1-hop neighbors as {nodes, edges, focus_uuid}."""
+        with self._driver.session() as session:
+            center_rows = session.run("""
+                MATCH (n {uuid: $uuid, repo_id: $repo_id})
+                RETURN n.uuid AS id,
+                       coalesce(n.name, n.file_path, n.directory, n.uuid) AS label,
+                       toLower(labels(n)[0]) AS type,
+                       coalesce(n.file_path, n.directory, '') AS file_path,
+                       coalesce(n.line_start, 0) AS line_start,
+                       coalesce(n.line_end,   0) AS line_end,
+                       coalesce(n.full_body, n.docstring, '') AS full_body
+            """, {"uuid": uuid, "repo_id": repo_id})
+            center_list = [dict(r) for r in center_rows]
+            if not center_list:
+                return {"nodes": [], "edges": [], "focus_uuid": uuid}
+
+            neighbor_rows = session.run("""
+                MATCH (center {uuid: $uuid, repo_id: $repo_id})-[r]-(neighbor {repo_id: $repo_id})
+                WHERE type(r) IN ['CALLS', 'INHERITS', 'IMPORTS', 'METHOD_OF',
+                                  'CONTAINS', 'PART_OF', 'DEFINED_IN']
+                RETURN DISTINCT
+                       neighbor.uuid AS id,
+                       coalesce(neighbor.name, neighbor.file_path, neighbor.directory) AS label,
+                       toLower(labels(neighbor)[0]) AS type,
+                       coalesce(neighbor.file_path, neighbor.directory, '') AS file_path,
+                       coalesce(neighbor.line_start, 0) AS line_start,
+                       coalesce(neighbor.line_end,   0) AS line_end,
+                       coalesce(neighbor.full_body, neighbor.docstring, '') AS full_body
+            """, {"uuid": uuid, "repo_id": repo_id})
+            neighbors = [dict(r) for r in neighbor_rows]
+
+        all_nodes = center_list + neighbors
+        node_ids  = [n["id"] for n in all_nodes]
+
+        with self._driver.session() as session:
+            edge_rows = session.run("""
+                MATCH (a {repo_id: $repo_id})-[r]->(b {repo_id: $repo_id})
+                WHERE a.uuid IN $ids AND b.uuid IN $ids
+                  AND type(r) IN ['CALLS', 'INHERITS', 'IMPORTS', 'METHOD_OF',
+                                  'CONTAINS', 'PART_OF', 'DEFINED_IN']
+                RETURN a.uuid + '->' + b.uuid + ':' + type(r) AS id,
+                       a.uuid AS source, b.uuid AS target, type(r) AS rel_type
+            """, {"repo_id": repo_id, "ids": node_ids})
+            edges = [dict(r) for r in edge_rows]
+
+        in_deg: dict[str, int]  = {}
+        out_deg: dict[str, int] = {}
+        for e in edges:
+            in_deg[e["target"]]  = in_deg.get(e["target"], 0)  + 1
+            out_deg[e["source"]] = out_deg.get(e["source"], 0) + 1
+        for n in all_nodes:
+            n["in_degree"]  = in_deg.get(n["id"],  0)
+            n["out_degree"] = out_deg.get(n["id"], 0)
+
+        return {"nodes": all_nodes, "edges": edges, "focus_uuid": uuid}
+
+    def list_repos(self) -> list[dict]:
+        with self._driver.session() as session:
+            rows = session.run("""
+                MATCH (r:Repository)
+                RETURN r.repo_id AS repo_id, r.name AS name,
+                       coalesce(r.remote_url, '') AS remote_url
+                ORDER BY r.name
+            """)
+            return [dict(r) for r in rows]
+
+    def delete_repo(self, repo_id: str) -> int:
+        with self._driver.session() as session:
+            count_result = session.run(
+                "MATCH (n {repo_id: $repo_id}) RETURN count(n) AS total",
+                {"repo_id": repo_id}
+            )
+            total = count_result.single()["total"]
+            session.run("MATCH (n {repo_id: $repo_id}) DETACH DELETE n", {"repo_id": repo_id})
+            logger.info("Deleted %d nodes for repo_id=%s", total, repo_id)
+            return total
+
     # ----- internal --------------------------------------------------------- #
 
     def _run(self, cypher: str, params: dict) -> list[dict]:

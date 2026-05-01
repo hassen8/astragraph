@@ -251,6 +251,31 @@ def ingest_status(job_id: str) -> IngestStatus:
     return IngestStatus(**job)
 
 
+@app.get("/repos")
+def list_repos(req: Request) -> dict:
+    store: Neo4jStore = req.app.state.graph_store
+    return {"repos": store.list_repos()}
+
+
+@app.delete("/repos/{repo_id}")
+def delete_repo(repo_id: str, req: Request) -> dict:
+    graph_store:  Neo4jStore  = req.app.state.graph_store
+    vector_store: QdrantStore = req.app.state.vector_store
+    deleted_nodes = graph_store.delete_repo(repo_id)
+    vector_store.delete_repo(repo_id)
+    return {"repo_id": repo_id, "deleted_nodes": deleted_nodes}
+
+
+@app.get("/graph/{repo_id}/node/{uuid}")
+def graph_node(repo_id: str, uuid: str, req: Request) -> dict:
+    """Return a single node and its 1-hop neighborhood for focused visualization."""
+    store: Neo4jStore = req.app.state.graph_store
+    data = store.get_node_neighborhood(uuid, repo_id)
+    if not data["nodes"]:
+        raise HTTPException(status_code=404, detail=f"Node {uuid!r} not found in repo {repo_id!r}")
+    return data
+
+
 @app.get("/graph/{repo_id}")
 def graph(repo_id: str, req: Request, limit: int = 75, types: str = "function") -> dict:
     """Repo graph for visualisation.

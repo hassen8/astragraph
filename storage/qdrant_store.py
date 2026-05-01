@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchValue, NamedVector, Query
+from qdrant_client.models import FieldCondition, Filter, FilterSelector, MatchValue, NamedVector, Query
 
 from config import Config
 from ingestion.models import EmbedDoc
@@ -66,6 +66,15 @@ class QdrantStore:
         self._writer.write(docs, vectors)
 
     # ----- reads ------------------------------------------------------------ #
+
+    def delete_repo(self, repo_id: str) -> None:
+        self._client.delete(
+            collection_name=self._cfg.collection_name,
+            points_selector=FilterSelector(
+                filter=Filter(must=[FieldCondition(key="repo_id", match=MatchValue(value=repo_id))])
+            ),
+        )
+        logger.info("Deleted Qdrant vectors for repo_id=%s", repo_id)
 
     def search(self, vector: list[float], repo_id: str | None, top_k: int) -> list[dict]:
         payload_filter = None
