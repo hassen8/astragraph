@@ -17,3 +17,8 @@ sample_run.ipynb
 .python-version
 ingestion_checkpoint.json
 chroma_db/
+CLAUDE.md
+progress.md
+docs/neo4j_explainer.md
+tests/test_extraction_output.py
+docs/
