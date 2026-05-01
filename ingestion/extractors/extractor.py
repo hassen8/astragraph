@@ -23,24 +23,36 @@ from ..models import (
 )
 
 
+# Module-level caches — live for the lifetime of the process.
+# Means load_queries() reads the .scm file once per language,
+# and Query objects are compiled once per (language, query_name) pair.
+_query_string_cache: dict[str, dict[str, str]] = {}
+_compiled_query_cache: dict[tuple[str, str], Query] = {}
+
+
 def load_queries(language: str) -> dict[str, str]:
     """
     Load S-expression queries from the queries/ directory.
     Parses `;; @query: name` delimiters to split into a dictionary.
+    Result is cached at module level — the .scm file is read once per language.
     """
+    if language in _query_string_cache:
+        return _query_string_cache[language]
+
     directory = os.path.dirname(__file__)
     query_file = os.path.join(directory, "queries", f"{language}.scm")
-    
-    queries = {}
+
+    queries: dict[str, str] = {}
     if not os.path.exists(query_file):
+        _query_string_cache[language] = queries
         return queries
 
     with open(query_file, "r", encoding="utf-8") as f:
         content = f.read()
 
     current_query_name = None
-    current_query_body = []
-    
+    current_query_body: list[str] = []
+
     for line in content.splitlines():
         trimmed = line.strip()
         if trimmed.startswith(";; @query:"):
@@ -55,6 +67,7 @@ def load_queries(language: str) -> dict[str, str]:
     if current_query_name is not None:
         queries[current_query_name] = "\n".join(current_query_body).strip()
 
+    _query_string_cache[language] = queries
     return queries
 
 
@@ -82,20 +95,24 @@ class ExtractionContext:
         self.repo_root = repo_root
 
         self._queries = load_queries(language)
-        self._query_cache: dict[str, object] = {}
 
     def query(self, name: str) -> Optional[Query]:
-        """Return a compiled tree-sitter Query object, cached after first compile."""
-        if name not in self._query_cache:
+        """
+        Return a compiled tree-sitter Query object.
+        Compiled objects are cached at module level keyed by (language, name),
+        so each query is compiled once per process, not once per file.
+        """
+        key = (self.language, name)
+        if key not in _compiled_query_cache:
             query_str = self._queries.get(name, "")
             if not query_str.strip():
                 return None
             try:
-                self._query_cache[name] = Query(self.lang_obj, query_str)
+                _compiled_query_cache[key] = Query(self.lang_obj, query_str)
             except Exception as e:
                 print(f"Error compiling query '{name}': {e}")
                 return None
-        return self._query_cache[name]
+        return _compiled_query_cache[key]
 
     def captures(self, query_name: str, node: Node) -> dict[str, list[Node]]:
         """
