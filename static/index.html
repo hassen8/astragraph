@@ -1457,11 +1457,6 @@
       <label for="github-url">github url</label>
       <input type="text" id="github-url" placeholder="https://github.com/owner/repo" />
     </div>
-    <div class="field">
-      <label for="repo-id-input">repo id <span style="opacity:0.5">— optional</span></label>
-      <input type="text" id="repo-id-input" placeholder="defaults to repo name" />
-    </div>
-
     <div class="ingest-progress" id="ingest-progress">
       <div class="step-pills">
         <span class="pill" data-phase="cloning">Clone</span>
@@ -2343,7 +2338,7 @@ function updateProgress(phase, progress, status) {
 async function startIngest() {
   const url = document.getElementById("github-url").value.trim()
   if (!url) return
-  const repoId = document.getElementById("repo-id-input").value.trim() || null
+  const repoId = null
 
   document.getElementById("ingest-btn").disabled = true
   document.getElementById("ingest-btn").innerHTML = '<span>Starting…</span>'
