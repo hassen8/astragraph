@@ -325,6 +325,8 @@ class Relationship:
     dst_uuid:   Optional[str]
     rel_type:   str
     properties: dict = field(default_factory=dict)
+    src_label:  Optional[str] = None   # Neo4j node label for src, e.g. "Function"
+    dst_label:  Optional[str] = None   # Neo4j node label for dst, e.g. "Module"
 
 
 # ---------------------------------------------------------------------------

@@ -150,6 +150,8 @@ class RelationshipResolver:
                 dst_uuid=self.repo.uuid,
                 rel_type="PART_OF",
                 properties={"level": "top"},
+                src_label="Package",
+                dst_label="Repository",
             ))
         else:
             # Nested package — points to immediate parent package
@@ -161,6 +163,8 @@ class RelationshipResolver:
                     dst_uuid=parent_pkg.uuid,
                     rel_type="PART_OF",
                     properties={"level": "nested"},
+                    src_label="Package",
+                    dst_label="Package",
                 ))
             else:
                 # Parent package not yet seen — will be registered later.
@@ -170,6 +174,7 @@ class RelationshipResolver:
                     dst_uuid=None,
                     rel_type="PART_OF_UNKNOWN",
                     properties={"parent_package": parent_name},
+                    src_label="Package",
                 ))
 
         return rels
@@ -186,6 +191,8 @@ class RelationshipResolver:
             dst_uuid=module.uuid,
             rel_type="CONTAINS",
             properties={},
+            src_label="Package",
+            dst_label="Module",
         )]
 
     # ------------------------------------------------------------------
@@ -210,6 +217,8 @@ class RelationshipResolver:
                 dst_uuid=module.uuid,
                 rel_type="DEFINED_IN",
                 properties={},
+                src_label="Function",
+                dst_label="Module",
             ))
         for cls in classes:
             rels.append(Relationship(
@@ -217,6 +226,8 @@ class RelationshipResolver:
                 dst_uuid=module.uuid,
                 rel_type="DEFINED_IN",
                 properties={},
+                src_label="Class",
+                dst_label="Module",
             ))
         return rels
 
@@ -257,6 +268,8 @@ class RelationshipResolver:
                         "is_classmethod":  fn.is_classmethod,
                         "is_staticmethod": fn.is_staticmethod,
                     },
+                    src_label="Function",
+                    dst_label="Class",
                 ))
         return rels
 
@@ -286,6 +299,8 @@ class RelationshipResolver:
                         "is_instance":  attr.is_instance,
                         "is_class_var": attr.is_class_var,
                     },
+                    src_label="Class",
+                    dst_label="Attribute",
                 ))
         return rels
 
@@ -320,6 +335,8 @@ class RelationshipResolver:
                         "is_variadic": param.is_variadic,
                         "is_keyword":  param.is_keyword,
                     },
+                    src_label="Function",
+                    dst_label="Parameter",
                 ))
         return rels
 
@@ -364,6 +381,8 @@ class RelationshipResolver:
                         dst_uuid=resolved.uuid,
                         rel_type="INHERITS",
                         properties={"is_direct": True},
+                        src_label="Class",
+                        dst_label="Class",
                     ))
                 else:
                     rels.append(Relationship(
@@ -371,6 +390,7 @@ class RelationshipResolver:
                         dst_uuid=None,
                         rel_type="INHERITS_UNKNOWN",
                         properties={"base_name": base_name},
+                        src_label="Class",
                     ))
 
         return rels
@@ -413,6 +433,8 @@ class RelationshipResolver:
                         "raw_import":  import_text.strip(),
                         "is_external": False,
                     },
+                    src_label="Module",
+                    dst_label="Module",
                 ))
                 continue
 
@@ -438,8 +460,10 @@ class RelationshipResolver:
                         properties={
                             "raw_import":    import_text.strip(),
                             "is_external":   False,
-                            "imports_package": True,  # flag: target was a package, not a module
+                            "imports_package": True,
                         },
+                        src_label="Module",
+                        dst_label="Module",
                     ))
                 # If the package has no __init__ module yet (not yet processed),
                 # skip rather than emitting a wrong ExternalDependency.
@@ -457,6 +481,8 @@ class RelationshipResolver:
                     "raw_import":   import_text.strip(),
                     "is_external":  True,
                 },
+                src_label="Module",
+                dst_label="ExternalDependency",
             ))
 
         return rels
@@ -508,6 +534,8 @@ class RelationshipResolver:
                             "resolved_in_pass": 2,
                             "confidence":       confidence,
                         },
+                        src_label="Function",
+                        dst_label="Function",
                     ))
                 else:
                     finalised.append(rel)
@@ -584,20 +612,32 @@ class RelationshipWriter:
 
     def _write_resolved_batch(self, rels: list[Relationship]) -> None:
         """
-        Group by rel_type and batch-write with UNWIND.
-        Grouping is required because Neo4j doesn't support parameterised
-        relationship type names in Cypher.
+        Group by (rel_type, src_label, dst_label) and batch-write with UNWIND.
+
+        Grouping by rel_type is required because Cypher does not support
+        parameterised relationship type names — you cannot write
+        MERGE (a)-[r:$type]->(b). Each type must be a literal in the query.
+
+        We also group by src_label and dst_label so that MATCH clauses include
+        the node label (e.g. MATCH (src:Function {uuid: ...})). This lets Neo4j
+        use the per-label uuid constraint indexes directly instead of doing a
+        union scan across all labels, which was the dominant bottleneck.
         """
-        by_type: dict[str, list[Relationship]] = {}
+        # Key: (rel_type, src_label or "", dst_label or "")
+        by_key: dict[tuple, list[Relationship]] = {}
         for rel in rels:
-            by_type.setdefault(rel.rel_type, []).append(rel)
+            key = (rel.rel_type, rel.src_label or "", rel.dst_label or "")
+            by_key.setdefault(key, []).append(rel)
 
         with self.driver.session() as session:
-            for rel_type, batch in by_type.items():
+            for (rel_type, src_label, dst_label), batch in by_key.items():
+                # Build MATCH clauses: include label when known, omit when not.
+                src_match = f"(src:{src_label} {{uuid: row.src_uuid}})" if src_label else "(src {{uuid: row.src_uuid}})"
+                dst_match = f"(dst:{dst_label} {{uuid: row.dst_uuid}})" if dst_label else "(dst {{uuid: row.dst_uuid}})"
                 cypher = f"""
                     UNWIND $rows AS row
-                    MATCH (src {{uuid: row.src_uuid}})
-                    MATCH (dst {{uuid: row.dst_uuid}})
+                    MATCH {src_match}
+                    MATCH {dst_match}
                     MERGE (src)-[r:{rel_type}]->(dst)
                     SET r += row.properties
                 """
@@ -613,35 +653,46 @@ class RelationshipWriter:
                 logger.debug("Wrote %d %s relationships", len(batch), rel_type)
 
     def _write_unresolved_batch(self, rels: list[Relationship]) -> None:
-        """Write unresolved edges as :Unresolved nodes for auditability."""
+        """
+        Write unresolved edges as :Unresolved nodes for auditability.
+        Groups by src_label so each query uses a labelled MATCH for fast index lookup.
+        """
+        # Group by src_label so each batch gets a labelled MATCH clause.
+        # CALLS_UNKNOWN src=Function, INHERITS_UNKNOWN src=Class, etc.
+        by_label: dict[str, list[dict]] = {}
+        for rel in rels:
+            label = rel.src_label or ""
+            target = (
+                rel.properties.get("callee")
+                or rel.properties.get("base_name")
+                or rel.properties.get("module_name")
+                or rel.properties.get("parent_package")
+                or "unknown"
+            )
+            by_label.setdefault(label, []).append({
+                "src_uuid": rel.src_uuid,
+                "rel_type": rel.rel_type,
+                "target":   target,
+                "raw":      str(rel.properties),
+            })
+
         with self.driver.session() as session:
-            cypher = """
-                UNWIND $rows AS row
-                MATCH (src {uuid: row.src_uuid})
-                MERGE (u:Unresolved {
-                    src_uuid: row.src_uuid,
-                    rel_type: row.rel_type,
-                    target:   row.target
-                })
-                MERGE (src)-[:HAS_UNRESOLVED]->(u)
-                SET u.raw = row.raw
-            """
-            rows = []
-            for rel in rels:
-                target = (
-                    rel.properties.get("callee")
-                    or rel.properties.get("base_name")
-                    or rel.properties.get("module_name")
-                    or rel.properties.get("parent_package")
-                    or "unknown"
-                )
-                rows.append({
-                    "src_uuid": rel.src_uuid,
-                    "rel_type": rel.rel_type,
-                    "target":   target,
-                    "raw":      str(rel.properties),
-                })
-            session.run(cypher, rows=rows)
+            for src_label, rows in by_label.items():
+                src_match = f"(src:{src_label} {{uuid: row.src_uuid}})" if src_label else "(src {uuid: row.src_uuid})"
+                # CREATE instead of MERGE — Unresolved nodes are audit records,
+                # not shared nodes. No dedup needed.
+                cypher = f"""
+                    UNWIND $rows AS row
+                    MATCH {src_match}
+                    CREATE (u:Unresolved {{
+                        src_uuid: row.src_uuid,
+                        rel_type: row.rel_type,
+                        target:   row.target,
+                        raw:      row.raw
+                    }})
+                    CREATE (src)-[:HAS_UNRESOLVED]->(u)
+                """
+                session.run(cypher, rows=rows)
 
     def write_external_dependencies(self, rels: list[Relationship]) -> None:
         """
@@ -660,7 +711,7 @@ class RelationshipWriter:
                 SET e.name       = row.module_name,
                     e.raw_import = row.raw_import
                 WITH e, row
-                MATCH (src {uuid: row.src_uuid})
+                MATCH (src:Module {uuid: row.src_uuid})
                 MERGE (src)-[r:IMPORTS_EXTERNAL]->(e)
                 SET r.raw_import = row.raw_import
             """
