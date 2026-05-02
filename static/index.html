@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AstraGraph — a codex of code</title>
+  <title>AstraGraph - Visualize your source code</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1031,6 +1032,8 @@
       user-select: none;
     }
     .hljs-ln-code { padding-left: 14px; padding-right: 18px; }
+    .hljs-ln-line.hi { background: rgba(212,165,116,0.15); }
+    .hljs-ln-line.hi .hljs-ln-n { border-right-color: var(--brass); opacity: 1; color: var(--brass); }
     /* info card for non-function nodes */
     .info-card {
       padding: 24px 28px;
@@ -2052,6 +2055,32 @@ function getLang(filePath) {
   return "python"
 }
 
+function renderCodeInDrawer(container, source, lang, lineStart, lineEnd) {
+  const pre  = document.createElement("pre")
+  const code = document.createElement("code")
+  code.className   = `hljs language-${lang}`
+  code.textContent = source
+  pre.appendChild(code)
+  container.innerHTML = ""
+  container.appendChild(pre)
+  hljs.highlightElement(code)
+  if (typeof hljs.lineNumbersBlock === "function") {
+    hljs.lineNumbersBlock(code, { startFrom: 1 })
+  }
+  // highlight the relevant line range
+  if (lineStart > 0) {
+    requestAnimationFrame(() => {
+      const rows = container.querySelectorAll(".hljs-ln-line.hljs-ln-code")
+      rows.forEach(row => {
+        const n = parseInt(row.getAttribute("data-line-number"), 10)
+        if (n >= lineStart && n <= lineEnd) row.classList.add("hi")
+      })
+      const first = container.querySelector(`.hljs-ln-line.hljs-ln-code[data-line-number="${lineStart}"]`)
+      if (first) first.scrollIntoView({ block: "center", behavior: "smooth" })
+    })
+  }
+}
+
 function openNodeDrawer(item, nodeType) {
   if (!item) return
   document.getElementById("fh-name").textContent  = item.name || ""
@@ -2060,24 +2089,11 @@ function openNodeDrawer(item, nodeType) {
     (item.line_start && item.line_end && item.line_start > 0) ? `${item.line_start}–${item.line_end}` : ""
 
   const container = document.getElementById("file-body")
-  const type = nodeType || item.type || "function"
-  const body = item.full_body
+  const type      = nodeType || item.type || "function"
 
-  if (body && type === "function") {
-    const lang = getLang(item.file_path)
-    const pre  = document.createElement("pre")
-    const code = document.createElement("code")
-    code.className   = `hljs language-${lang}`
-    code.textContent = body
-    pre.appendChild(code)
-    container.innerHTML = ""
-    container.appendChild(pre)
-    hljs.highlightElement(code)
-    if (typeof hljs.lineNumbersBlock === "function") {
-      hljs.lineNumbersBlock(code, { startFrom: item.line_start || 1 })
-    }
-  } else {
-    const docstring = body || item.docstring || ""
+  // Show info card for non-function/non-method nodes
+  if (type !== "function") {
+    const docstring = item.full_body || item.docstring || ""
     container.innerHTML = `
       <div class="info-card">
         <div class="ic-type">${escHtml(type.toUpperCase())}</div>
@@ -2089,9 +2105,38 @@ function openNodeDrawer(item, nodeType) {
           ? `<div class="ic-doc">${escHtml(docstring)}</div>`
           : `<div class="ic-doc ic-empty">No documentation available.</div>`}
       </div>`
+    document.getElementById("file-drawer").classList.add("open")
+    return
   }
 
+  // For functions: try to load the live file from disk
   document.getElementById("file-drawer").classList.add("open")
+  container.innerHTML = `<div class="ic-empty" style="padding:1rem">Loading…</div>`
+
+  const ls = item.line_start || 1
+  const le = item.line_end   || ls
+
+  if (currentRepoId && item.file_path) {
+    fetch(`/source/${encodeURIComponent(currentRepoId)}?file=${encodeURIComponent(item.file_path)}`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => renderCodeInDrawer(container, data.content, data.language, ls, le))
+      .catch(() => {
+        // fall back to stored full_body
+        const body = item.full_body
+        if (body) {
+          renderCodeInDrawer(container, body, getLang(item.file_path), ls, le)
+        } else {
+          container.innerHTML = `<div class="ic-empty" style="padding:1rem">Source not available.</div>`
+        }
+      })
+  } else {
+    const body = item.full_body
+    if (body) {
+      renderCodeInDrawer(container, body, getLang(item.file_path), ls, le)
+    } else {
+      container.innerHTML = `<div class="ic-empty" style="padding:1rem">Source not available.</div>`
+    }
+  }
 }
 
 function closeFileDrawer() {
@@ -2202,21 +2247,22 @@ async function onRepoChange(repoId) {
 async function loadRepoList() {
   try {
     const res = await fetch("/repos")
-    if (!res.ok) return
+    if (!res.ok) { console.warn("loadRepoList: server returned", res.status); return false }
     const data = await res.json()
+    const repos = data.repos || []
     const sel  = document.getElementById("repo-select")
     const prev = sel.value
     sel.innerHTML = '<option value="">—</option>'
-    for (const r of (data.repos || [])) {
+    for (const r of repos) {
       const id = r.repo_id || r.name
       if (!id) continue
       const opt = document.createElement("option")
       opt.value = id; opt.textContent = id
       sel.appendChild(opt)
     }
-    // Restore previously selected value if still present
     if (prev && sel.querySelector(`option[value="${prev}"]`)) sel.value = prev
-  } catch (e) { /* server not ready, skip */ }
+    return repos.length > 0
+  } catch (e) { console.warn("loadRepoList failed:", e); return false }
 }
 
 function addKnownRepo(repoId) {
@@ -2261,15 +2307,22 @@ function updateChatEnabled() {
   document.querySelectorAll(".sample").forEach(s => { s.disabled = !enabled; s.style.opacity = enabled ? "" : "0.4" })
 }
 
-// On page load: populate list then restore the last used repo
-loadRepoList().then(() => {
+// On page load: populate list then restore the last used repo.
+// Retry once after 1.5 s if the server isn't ready yet.
+async function initRepoList() {
+  let ok = await loadRepoList()
+  if (!ok) {
+    await new Promise(r => setTimeout(r, 1500))
+    ok = await loadRepoList()
+  }
   const saved = localStorage.getItem("lastRepo")
   const sel   = document.getElementById("repo-select")
   if (saved && sel.querySelector(`option[value="${saved}"]`)) {
     sel.value = saved
-    onRepoChange(saved)
+    await onRepoChange(saved)
   }
-})
+}
+initRepoList()
 updateChatEnabled()
 
 // ─────────────────────────────────────────────────────────────────────

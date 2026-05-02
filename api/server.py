@@ -289,6 +289,22 @@ def graph(repo_id: str, req: Request, limit: int = 75, types: str = "function") 
     return store.get_full_graph(repo_id, limit=limit, types=type_list)
 
 
+_LANG_MAP = {".py": "python", ".ts": "typescript", ".tsx": "typescript", ".go": "go", ".js": "javascript"}
+
+
+@app.get("/source/{repo_id}")
+def get_source(repo_id: str, file: str, req: Request) -> dict:
+    """Return the raw content of a file from the cloned repo workspace."""
+    safe_root = (WORKSPACE_DIR / repo_id).resolve()
+    target    = (safe_root / file).resolve()
+    if not str(target).startswith(str(safe_root) + "/"):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    lang = _LANG_MAP.get(target.suffix.lower(), "plaintext")
+    return {"content": target.read_text(errors="replace"), "language": lang}
+
+
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest, req: Request) -> QueryResponse:
     initial_state = {
