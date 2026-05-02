@@ -5,7 +5,11 @@
 AstraGraph is a powerful **GraphRAG for source code** that understands the true structure of your codebase. It ingests a repository into a Neo4j property graph and a Qdrant vector store simultaneously, giving LLMs the ability to navigate your code exactly how a developer would—tracing imports, inheritance, and call chains to answer complex questions by combining structural (Cypher) and semantic (embedding) retrieval through a LangGraph agent.
 
 ## Web interface
-<video src="static/showcase.mp4" controls="controls" style="max-width: 100%;"></video>
+
+
+https://github.com/user-attachments/assets/d6936c5f-4986-4260-850d-c5e8e7d9688d
+
+
 
 The UI (`/ui`) is a single-page app with no build step.
 
