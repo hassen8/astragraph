@@ -25,7 +25,19 @@ WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 
-_GITHUB_RE = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+(\.git)?$")
+_GITHUB_RE  = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+(\.git)?$")
+_REPO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def _safe_repo_path(repo_id: str) -> Path:
+    """Return WORKSPACE_DIR/repo_id, raising 422 if repo_id is not a safe identifier."""
+    if not _REPO_ID_RE.match(repo_id):
+        raise HTTPException(status_code=422, detail="repo_id must be alphanumeric, hyphens, or underscores (max 64 chars)")
+    ws = WORKSPACE_DIR.resolve()
+    path = (WORKSPACE_DIR / repo_id).resolve()
+    if not str(path).startswith(str(ws) + "/"):
+        raise HTTPException(status_code=422, detail="Invalid repo_id")
+    return path
 
 
 def _validate_config(cfg: Config) -> None:
@@ -181,7 +193,7 @@ def _ingest_worker(job_id: str, github_url: str, repo_id: str, cfg: Config) -> N
         with _jobs_lock:
             _jobs[job_id].update(kwargs)
 
-    clone_path = WORKSPACE_DIR / repo_id
+    clone_path = WORKSPACE_DIR / re.sub(r"[^a-zA-Z0-9_-]", "-", repo_id)[:64]
     try:
         _set(status="cloning", progress="cloning repository…")
         if clone_path.exists():
@@ -215,7 +227,10 @@ def ingest(request: IngestRequest, req: Request) -> IngestResponse:
     if not _GITHUB_RE.match(request.github_url):
         raise HTTPException(status_code=422, detail="github_url must be a valid https://github.com/... URL")
 
-    repo_id = request.repo_id or request.github_url.rstrip("/").rstrip(".git").split("/")[-1]
+    raw_id  = request.repo_id or request.github_url.rstrip("/").rstrip(".git").split("/")[-1]
+    repo_id = re.sub(r"[^a-zA-Z0-9_-]", "-", raw_id)[:64]
+    if not repo_id:
+        raise HTTPException(status_code=422, detail="Could not derive a valid repo_id from the URL")
 
     with _jobs_lock:
         running = [j for j in _jobs.values() if j["repo_id"] == repo_id and j["status"] in ("cloning", "ingesting")]
@@ -295,9 +310,12 @@ _LANG_MAP = {".py": "python", ".ts": "typescript", ".tsx": "typescript", ".go": 
 @app.get("/source/{repo_id}")
 def get_source(repo_id: str, file: str, req: Request) -> dict:
     """Return the raw content of a file from the cloned repo workspace."""
-    safe_root = (WORKSPACE_DIR / repo_id).resolve()
+    safe_root = _safe_repo_path(repo_id)
     target    = (safe_root / file).resolve()
     if not str(target).startswith(str(safe_root) + "/"):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    # Reject symlinks whose resolved target escapes the workspace
+    if target.is_symlink() and not str(target.resolve()).startswith(str(safe_root) + "/"):
         raise HTTPException(status_code=400, detail="Invalid path")
     if not target.exists():
         raise HTTPException(status_code=404, detail="File not found")
