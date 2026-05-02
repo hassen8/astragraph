@@ -4,6 +4,30 @@
 
 AstraGraph is a powerful **GraphRAG for source code** that understands the true structure of your codebase. It ingests a repository into a Neo4j property graph and a Qdrant vector store simultaneously, giving LLMs the ability to navigate your code exactly how a developer would—tracing imports, inheritance, and call chains to answer complex questions by combining structural (Cypher) and semantic (embedding) retrieval through a LangGraph agent.
 
+## Web interface
+<video src="static/showcase.mp4" controls="controls" style="max-width: 100%;"></video>
+
+The UI (`/ui`) is a single-page app with no build step.
+
+**Left panel — chat:**
+- Hybrid/graph/vector mode selector
+- Send a question, get an answer with source badges
+- Click a source badge to isolate that node in the graph (fetches its 1-hop neighborhood from the server if not currently visible)
+
+**Right panel — graph:**
+- Cytoscape.js force-directed graph of the repo's call/inheritance/import structure
+- Nodes sized by in-degree (structural importance)
+- Type filters: function, class, module, package
+- Node count selector: 25 / 50 / 75 / 100 / 200 / 500
+- Layout selector: cose, concentric, breadthfirst, circle, grid
+- **File Viewer:** Clicking a node in the graph will open the file viewer. For functions, it displays the syntax-highlighted source code with correct line numbers. For classes and modules, it shows a detailed metadata card.
+- Dark / light theme toggle, persisted in localStorage
+
+**Ingest modal:**
+- Paste a GitHub URL (Currently only works for python projects)
+- Phase pills + progress bar track the ingestion pipeline in real time
+- Errors surface inline
+
 ---
 
 ## The Strength of Hybrid Retrieval
@@ -244,35 +268,6 @@ Response includes `answer` (LLM synthesis) and `provenance` (list of retrieved n
 ```
 
 Returns a `job_id` immediately. Poll `/ingest/status/{job_id}` to track phases: `cloning → parsing → writing_entities → writing_relationships → resolving_calls → embedding → writing_vectors → done`.
-
----
-
-## Web interface
-#### AstraGraph Web Interface
-![AstraGraph Web Interface](static/screenshot.jpeg)  
-#### AstraGraph Node File Viewer
-![AstraGraph Node File Viewer](static/screenshot_2.jpeg)
-
-The UI (`/ui`) is a single-page app with no build step.
-
-**Left panel — chat:**
-- Hybrid/graph/vector mode selector
-- Send a question, get an answer with source badges
-- Click a source badge to isolate that node in the graph (fetches its 1-hop neighborhood from the server if not currently visible)
-
-**Right panel — graph:**
-- Cytoscape.js force-directed graph of the repo's call/inheritance/import structure
-- Nodes sized by in-degree (structural importance)
-- Type filters: function, class, module, package
-- Node count selector: 25 / 50 / 75 / 100 / 200 / 500
-- Layout selector: cose, concentric, breadthfirst, circle, grid
-- **File Viewer:** Clicking a node in the graph will open the file viewer. For functions, it displays the syntax-highlighted source code with correct line numbers. For classes and modules, it shows a detailed metadata card.
-- Dark / light theme toggle, persisted in localStorage
-
-**Ingest modal:**
-- Paste a GitHub URL (Currently only works for python projects)
-- Phase pills + progress bar track the ingestion pipeline in real time
-- Errors surface inline
 
 ---
 
