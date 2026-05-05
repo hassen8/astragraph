@@ -319,7 +319,7 @@ Auto-generate ~50 (query, ground-truth contexts, answer) triples from ingested f
 | **TypeScript / Go extraction** | Full entity extraction for TypeScript and Go (stubs exist, tree-sitter grammars are wired up). |
 | **CoIR baseline eval** | Layer 1 eval against CodeSearchNet. |
 | **RAGAS synthetic eval** | Layer 2 eval with auto-generated test triples. |
-| **MCP server** | Wrap as an MCP tool for use inside Cursor / Claude Code. |
+| **MCP server** | Wrap as an MCP tool for use inside Cursor / Claude Code / Open Code etc...  |
 | **Embedded store option** | Replace Neo4j + Qdrant with KuzuDB + ChromaDB for a single-container, zero-signup deployment (e.g. HuggingFace Spaces). The Protocol abstraction in `storage/` makes this two new files. |
 | **Frontend v2** | React + Tailwind + shadcn/ui + Reagraph (WebGL) for larger repos and more interactivity. |
 
